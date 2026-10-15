@@ -1,0 +1,140 @@
+import { PartialType } from '@nestjs/swagger';
+import { Transform, Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsMongoId,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import { ProductStatus } from '@/common/enums';
+import { PageQueryDto } from '@/common/pagination';
+
+export class VariantDto {
+  /** Present when updating an existing variant; omit to create a new one. */
+  @IsOptional()
+  @IsMongoId()
+  id?: string;
+
+  @IsOptional() @IsString() @MaxLength(60) sku?: string;
+  @IsOptional() @IsString() @MaxLength(30) size?: string;
+  @IsOptional() @IsString() @MaxLength(30) color?: string;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(1_000_000)
+  price?: number | null;
+
+  @IsInt()
+  @Min(0)
+  @Max(100_000)
+  stock: number;
+}
+
+export class CreateProductDto {
+  @IsString()
+  @Length(2, 120)
+  title: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+
+  @IsMongoId()
+  categoryId: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
+  @Max(1_000_000)
+  price: number;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(1_000_000)
+  compareAtPrice?: number | null;
+
+  /** Ids from POST /uploads with purpose PRODUCT_IMAGE; the first is the cover image. */
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsMongoId({ each: true })
+  imageFileIds: string[];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => VariantDto)
+  variants: VariantDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(30, { each: true })
+  tags?: string[];
+
+  /** ACTIVE publishes the product (needs an active subscription within plan limits). */
+  @IsOptional()
+  @IsIn([ProductStatus.DRAFT, ProductStatus.ACTIVE])
+  status?: ProductStatus;
+}
+
+export class UpdateProductDto extends PartialType(CreateProductDto) {
+  @IsOptional()
+  @IsEnum(ProductStatus)
+  status?: ProductStatus;
+}
+
+export class AdjustStockDto {
+  /** Positive to add stock, negative to remove. */
+  @IsInt()
+  @Min(-100_000)
+  @Max(100_000)
+  delta: number;
+}
+
+export class BrandProductsQueryDto extends PageQueryDto {
+  @IsOptional() @IsString() @MaxLength(100) q?: string;
+  @IsOptional() @IsEnum(ProductStatus) status?: ProductStatus;
+}
+
+export class ProductsQueryDto extends PageQueryDto {
+  @IsOptional() @IsString() @MaxLength(100) q?: string;
+  @IsOptional() @IsMongoId() categoryId?: string;
+  @IsOptional() @IsMongoId() brandId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  minPrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  maxPrice?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  inStock?: boolean;
+
+  @IsOptional()
+  @IsIn(['newest', 'price_asc', 'price_desc', 'rating', 'popular'])
+  sort?: 'newest' | 'price_asc' | 'price_desc' | 'rating' | 'popular';
+}

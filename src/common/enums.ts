@@ -1,0 +1,98 @@
+export enum Role {
+  CUSTOMER = 'CUSTOMER',
+  SUPER_ADMIN = 'SUPER_ADMIN',
+}
+
+export enum AccountStatus {
+  ACTIVE = 'ACTIVE',
+  SUSPENDED = 'SUSPENDED',
+}
+
+/** Review state only. Being visible to customers also needs a running subscription. */
+export enum BrandStatus {
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  ACTIVE = 'ACTIVE',
+  REJECTED = 'REJECTED',
+  SUSPENDED = 'SUSPENDED',
+}
+
+export enum BrandMemberRole {
+  OWNER = 'OWNER',
+}
+
+export enum BillingPeriod {
+  MONTHLY = 'MONTHLY',
+  YEARLY = 'YEARLY',
+}
+
+export enum SubscriptionStatus {
+  PENDING_PAYMENT = 'PENDING_PAYMENT',
+  ACTIVE = 'ACTIVE',
+  EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum PaymentMethod {
+  INSTAPAY_MANUAL = 'INSTAPAY_MANUAL',
+}
+
+export enum PaymentStatus {
+  AWAITING_PROOF = 'AWAITING_PROOF',
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum FilePurpose {
+  PRODUCT_IMAGE = 'PRODUCT_IMAGE',
+  BRAND_LOGO = 'BRAND_LOGO',
+  BRAND_COVER = 'BRAND_COVER',
+  PAYMENT_PROOF = 'PAYMENT_PROOF',
+}
+
+export enum FileVisibility {
+  PUBLIC = 'PUBLIC',
+  PRIVATE = 'PRIVATE',
+}
+
+export enum ProductStatus {
+  DRAFT = 'DRAFT',
+  ACTIVE = 'ACTIVE',
+  ARCHIVED = 'ARCHIVED',
+}
+
+export enum OrderStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  PROCESSING = 'PROCESSING',
+  SHIPPED = 'SHIPPED',
+  DELIVERED = 'DELIVERED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum OrderPaymentMethod {
+  COD = 'COD',
+}
+
+export enum ReviewStatus {
+  VISIBLE = 'VISIBLE',
+  HIDDEN = 'HIDDEN',
+}
+
+export enum ReportTarget {
+  REVIEW = 'REVIEW',
+  PRODUCT = 'PRODUCT',
+  BRAND = 'BRAND',
+}
+
+export enum ReportStatus {
+  OPEN = 'OPEN',
+  RESOLVED = 'RESOLVED',
+  DISMISSED = 'DISMISSED',
+}
+
+export enum OtpPurpose {
+  VERIFY_CONTACT = 'VERIFY_CONTACT',
+  RESET_PASSWORD = 'RESET_PASSWORD',
+}
