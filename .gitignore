@@ -1,8 +1,8 @@
 node_modules
-dist
+/dist
 coverage
 .env
 *.log
-.mongo-data
-uploads
-openapi.json
+/.mongo-data
+/uploads
+/openapi.json
