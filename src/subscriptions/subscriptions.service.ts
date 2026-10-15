@@ -240,7 +240,7 @@ export class SubscriptionsService {
     if (query.status) filter.status = query.status;
     if (query.brandId) filter.brandId = new Types.ObjectId(query.brandId);
     return paginate(this.payments, filter, query, {
-      sort: { submittedAt: -1, createdAt: -1 },
+      sort: query.sort === 'oldest' ? { submittedAt: 1, createdAt: 1 } : { submittedAt: -1, createdAt: -1 },
       populate: 'brandId',
     });
   }

@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsMongoId,
   IsNumber,
@@ -64,6 +65,11 @@ export class AdminPaymentsQueryDto extends PageQueryDto {
   @IsOptional()
   @IsEnum(PaymentStatus)
   status?: PaymentStatus;
+
+  /** oldest = first come, first reviewed (the review queue); newest = history. */
+  @IsOptional()
+  @IsIn(['oldest', 'newest'])
+  sort?: 'oldest' | 'newest';
 
   @IsOptional()
   @IsMongoId()
