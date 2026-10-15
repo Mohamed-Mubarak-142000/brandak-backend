@@ -3,7 +3,6 @@ import { ExpressAdapter } from '@nestjs/platform-express';
 import express from 'express';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { Logger } from 'nestjs-pino';
-import { AppModule } from './app.module';
 import { setupApp } from './setup-app';
 
 /**
@@ -13,6 +12,9 @@ import { setupApp } from './setup-app';
 let server: Promise<express.Express> | undefined;
 
 async function bootstrap() {
+  // Imported lazily: ConfigModule validates the environment at import time, and a failure
+  // here must be caught below instead of crashing the whole function.
+  const { AppModule } = await import('./app.module');
   const instance = express();
   const app = await NestFactory.create(AppModule, new ExpressAdapter(instance), { bufferLogs: true });
   app.useLogger(app.get(Logger));
