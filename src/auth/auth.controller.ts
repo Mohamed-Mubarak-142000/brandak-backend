@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthUser, CurrentUser, Public } from '@/common/decorators';
 import {
+  ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
   RefreshDto,
@@ -64,6 +65,14 @@ export class AuthController {
   @Post('verify-contact')
   verifyContact(@CurrentUser() user: AuthUser, @Body() dto: VerifyContactDto) {
     return this.auth.verifyContact(user.userId, dto.channel, dto.code);
+  }
+
+  @ApiBearerAuth()
+  @Throttle(STRICT)
+  @HttpCode(204)
+  @Post('change-password')
+  changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
+    return this.auth.changePassword(user.userId, user.sessionId, dto);
   }
 
   @Public()

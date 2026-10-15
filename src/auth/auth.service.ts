@@ -8,7 +8,7 @@ import { AppError } from '@/common/errors';
 import { normalizeEgyptPhone, normalizeEmail } from '@/common/utils/text';
 import { User, UserDocument } from '@/users/user.schema';
 import { toPublicUser, UsersService } from '@/users/users.service';
-import { LoginDto, RegisterDto, ResetPasswordDto } from './auth.dto';
+import { ChangePasswordDto, LoginDto, RegisterDto, ResetPasswordDto } from './auth.dto';
 import { OtpService } from './otp.service';
 import { SessionsService } from './sessions.service';
 
@@ -102,6 +102,26 @@ export class AuthService {
     await this.otp
       .issue(user.id, OtpPurpose.RESET_PASSWORD, channel, channel === 'email' ? user.email : user.phone)
       .catch(() => undefined);
+  }
+
+  /** Keeps the current session signed in and signs out every other device. */
+  async changePassword(userId: string, sessionId: string, dto: ChangePasswordDto) {
+    const user = await this.userModel.findById(userId).select('+passwordHash');
+    if (!user) throw new UnauthorizedException();
+    const ok = await argon2.verify(user.passwordHash, dto.currentPassword).catch(() => false);
+    if (!ok) {
+      throw AppError.unprocessable('WRONG_PASSWORD', 'Current password is incorrect', [
+        { field: 'currentPassword', reason: 'incorrect' },
+      ]);
+    }
+    if (dto.currentPassword === dto.newPassword) {
+      throw AppError.unprocessable('SAME_PASSWORD', 'Choose a password different from the current one', [
+        { field: 'newPassword', reason: 'same_as_current' },
+      ]);
+    }
+    user.passwordHash = await argon2.hash(dto.newPassword, { type: argon2.argon2id });
+    await user.save();
+    await this.sessions.revokeAllForUser(userId, sessionId);
   }
 
   async resetPassword(dto: ResetPasswordDto) {

@@ -99,11 +99,46 @@ export class ReviewsService {
 
   // ---------- Admin ----------
 
-  listReports(query: ReportsQueryDto) {
+  async listReports(query: ReportsQueryDto) {
     const filter: FilterQuery<Report> = {};
     if (query.status) filter.status = query.status;
     if (query.targetType) filter.targetType = query.targetType;
-    return paginate(this.reports, filter, query, { populate: 'reporterId' });
+    const page = await paginate(this.reports, filter, query, { populate: 'reporterId' });
+
+    // One query per target type, so moderators see what was reported without extra requests.
+    const idsOf = (type: ReportTarget) => page.items.filter((r) => r.targetType === type).map((r) => r.targetId);
+    const [reviews, products, brands] = await Promise.all([
+      this.reviews.find({ _id: { $in: idsOf(ReportTarget.REVIEW) } }).select('rating comment userName status productId').lean(),
+      this.products.find({ _id: { $in: idsOf(ReportTarget.PRODUCT) } }).select('title status brandId images').lean(),
+      this.brands.find({ _id: { $in: idsOf(ReportTarget.BRAND) } }).select('name slug status').lean(),
+    ]);
+    const summary = (r: (typeof page.items)[number]) => {
+      const id = r.targetId.toString();
+      switch (r.targetType) {
+        case ReportTarget.REVIEW: {
+          const t = reviews.find((x) => x._id.toString() === id);
+          return t && { title: t.comment || `تقييم ${t.rating}/5`, subtitle: t.userName, status: t.status, productId: t.productId.toString() };
+        }
+        case ReportTarget.PRODUCT: {
+          const t = products.find((x) => x._id.toString() === id);
+          return t && { title: t.title, status: t.status, imageUrl: t.images[0]?.url ?? null, brandId: t.brandId.toString() };
+        }
+        case ReportTarget.BRAND: {
+          const t = brands.find((x) => x._id.toString() === id);
+          return t && { title: t.name, subtitle: t.slug, status: t.status };
+        }
+      }
+    };
+    const items = page.items.map((r) => {
+      const reporter = r.reporterId as unknown as { _id: Types.ObjectId; name?: string; email?: string } | null;
+      return {
+        ...r,
+        reporterId: undefined,
+        reporter: reporter ? { id: reporter._id.toString(), name: reporter.name, email: reporter.email } : null,
+        target: summary(r) ?? null, // null when the target was deleted
+      };
+    });
+    return new PageResult(items, page.page, page.limit, page.total);
   }
 
   async resolveReport(adminId: string, id: string, dto: ResolveReportDto) {

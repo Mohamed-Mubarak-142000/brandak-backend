@@ -67,9 +67,13 @@ export class SessionsService {
     await this.sessions.updateOne({ _id: sessionId }, { $set: { revokedAt: new Date() } });
   }
 
-  async revokeAllForUser(userId: string) {
+  async revokeAllForUser(userId: string, exceptSessionId?: string) {
     await this.sessions.updateMany(
-      { userId: new Types.ObjectId(userId), revokedAt: { $exists: false } },
+      {
+        userId: new Types.ObjectId(userId),
+        revokedAt: { $exists: false },
+        ...(exceptSessionId ? { _id: { $ne: new Types.ObjectId(exceptSessionId) } } : {}),
+      },
       { $set: { revokedAt: new Date() } },
     );
   }

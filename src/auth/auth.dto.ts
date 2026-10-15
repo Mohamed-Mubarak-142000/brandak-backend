@@ -55,6 +55,15 @@ export class ForgotPasswordDto {
   identifier: string;
 }
 
+export class ChangePasswordDto {
+  @IsString()
+  @MaxLength(128)
+  currentPassword: string;
+
+  @Matches(STRONG_PASSWORD, { message: PASSWORD_MESSAGE })
+  newPassword: string;
+}
+
 export class ResetPasswordDto extends ForgotPasswordDto {
   @Matches(/^\d{6}$/)
   code: string;

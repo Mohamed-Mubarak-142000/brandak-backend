@@ -146,6 +146,27 @@ describe('Brandak marketplace (e2e)', () => {
       await ctx.http().post(api('/auth/forgot-password')).send({ identifier: 'nobody@test.dev' }).expect(204);
     });
 
+    it('changes the password, keeping this session and signing out other devices', async () => {
+      const u = await registerUser(ctx);
+      const other = await ctx.http().post(api('/auth/login')).send({ identifier: u.email, password: 'Passw0rd!' }).expect(200);
+      const wrong = await ctx
+        .http()
+        .post(api('/auth/change-password'))
+        .set(auth(u.token))
+        .send({ currentPassword: 'nope-nope1', newPassword: 'Changed123' })
+        .expect(422);
+      expect(wrong.body.error.code).toBe('WRONG_PASSWORD');
+      await ctx
+        .http()
+        .post(api('/auth/change-password'))
+        .set(auth(u.token))
+        .send({ currentPassword: 'Passw0rd!', newPassword: 'Changed123' })
+        .expect(204);
+      await ctx.http().get(api('/users/me')).set(auth(u.token)).expect(200);
+      await ctx.http().get(api('/users/me')).set(auth(other.body.data.accessToken)).expect(401);
+      await ctx.http().post(api('/auth/login')).send({ identifier: u.email, password: 'Changed123' }).expect(200);
+    });
+
     it('keeps admin endpoints away from regular users', async () => {
       const u = await registerUser(ctx);
       await ctx.http().get(api('/admin/payments')).set(auth(u.token)).expect(403);
@@ -561,6 +582,18 @@ describe('Brandak marketplace (e2e)', () => {
       expect(reviews.body.meta.stars['4']).toBe(1);
       const pub = await ctx.http().get(api(`/products/${product._id}`)).expect(200);
       expect(pub.body.data).toMatchObject({ ratingAvg: 4, ratingCount: 1 });
+
+      // Reports reach the moderation queue with a summary of what was reported.
+      await ctx
+        .http()
+        .post(api('/reports'))
+        .set(auth(shop.owner.token))
+        .send({ targetType: 'REVIEW', targetId: review.body.data.id, reason: 'FAKE' })
+        .expect(201);
+      const queue = await ctx.http().get(api('/admin/reports?status=OPEN')).set(auth(admin)).expect(200);
+      const reported = queue.body.data.find((r: any) => r.targetId === review.body.data.id);
+      expect(reported.target).toMatchObject({ title: 'خامة ممتازة', subtitle: 'Mona' });
+      expect(reported.reporter.name).toBe('Cotton Shop Owner');
 
       // Customer cancels a pending order → stock comes back.
       const before = await stockOf(0);
