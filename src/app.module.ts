@@ -43,7 +43,11 @@ import { WishlistsModule } from './wishlists/wishlists.module';
               return id;
             },
             redact: ['req.headers.authorization', 'req.headers.cookie'],
-            transport: env === 'development' ? { target: 'pino-pretty', options: { singleLine: true } } : undefined,
+            // pino-pretty is a dev dependency and runs in a worker thread, so never use it on Vercel.
+            transport:
+              env === 'development' && !process.env.VERCEL
+                ? { target: 'pino-pretty', options: { singleLine: true } }
+                : undefined,
           },
         };
       },

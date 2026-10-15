@@ -27,6 +27,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     server = undefined; // let the next request retry instead of caching the failure
     throw e;
   });
-  const app = await server;
+  let app: express.Express;
+  try {
+    app = await server;
+  } catch (e) {
+    // Boot failures (bad env, DB unreachable) end up in Vercel's runtime logs with the real reason.
+    console.error('Brandak API failed to start:', e instanceof Error ? e.message : e);
+    res.statusCode = 503;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ success: false, error: { code: 'SERVICE_UNAVAILABLE', message: 'API failed to start' } }));
+    return;
+  }
   app(req as express.Request, res as express.Response);
 }
