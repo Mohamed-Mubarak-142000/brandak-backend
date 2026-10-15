@@ -17,6 +17,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { Env, validateEnv } from './config/env';
+import { HealthController } from './health.controller';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OrdersModule } from './orders/orders.module';
 import { ProductsModule } from './products/products.module';
@@ -82,6 +83,7 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     ReviewsModule,
     AnalyticsModule,
   ],
+  controllers: [HealthController],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
