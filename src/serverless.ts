@@ -16,7 +16,10 @@ async function bootstrap() {
   // here must be caught below instead of crashing the whole function.
   const { AppModule } = await import('./app.module');
   const instance = express();
-  const app = await NestFactory.create(AppModule, new ExpressAdapter(instance), { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, new ExpressAdapter(instance), {
+    bufferLogs: true,
+    abortOnError: false, // throw instead of process.exit so the handler can report it
+  });
   app.useLogger(app.get(Logger));
   const origins = (process.env.CORS_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
   setupApp(app, origins);
