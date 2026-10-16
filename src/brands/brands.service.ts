@@ -175,7 +175,9 @@ export class BrandsService {
     const filter: FilterQuery<Brand> = {};
     if (query.status) filter.status = query.status;
     if (query.q?.trim()) filter.searchText = new RegExp(escapeRegex(normalizeSearchText(query.q)));
-    return paginate(this.brands, filter, query, { populate: { path: 'ownerUserId', select: 'name email phone' } });
+    const page = await paginate(this.brands, filter, query, { populate: { path: 'ownerUserId', select: 'name email phone' } });
+    // Visibility is computed on the server so every client agrees on "now" and the grace period.
+    return new PageResult(page.items.map((b) => ({ ...b, isVisible: this.isVisible(b) })), page.page, page.limit, page.total);
   }
 
   async adminGet(id: string) {
