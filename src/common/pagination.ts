@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
-import { FilterQuery, Model, SortOrder, Types } from 'mongoose';
+import { FilterQuery, Model, PopulateOptions, SortOrder, Types } from 'mongoose';
 
 export type Lean<T> = T & { _id: Types.ObjectId };
 
@@ -35,7 +35,7 @@ export async function paginate<T>(
   model: Model<T>,
   filter: FilterQuery<T>,
   query: PageQueryDto,
-  options: { sort?: Record<string, SortOrder>; select?: string; populate?: string } = {},
+  options: { sort?: Record<string, SortOrder>; select?: string; populate?: string | PopulateOptions } = {},
 ): Promise<PageResult<Lean<T>>> {
   const { page, limit } = query;
   let find = model
@@ -44,7 +44,7 @@ export async function paginate<T>(
     .skip((page - 1) * limit)
     .limit(limit);
   if (options.select) find = find.select(options.select);
-  if (options.populate) find = find.populate(options.populate);
+  if (options.populate) find = find.populate([options.populate].flat() as PopulateOptions[]);
   const [items, total] = await Promise.all([find.lean<Lean<T>[]>().exec(), model.countDocuments(filter)]);
   return new PageResult(items, page, limit, total);
 }

@@ -36,6 +36,7 @@ export class AuditLogsService {
     if (query.entityType) filter.entityType = query.entityType;
     if (query.entityId) filter.entityId = new Types.ObjectId(query.entityId);
     if (query.action) filter.action = query.action;
-    return paginate(this.logs, filter, query);
+    // Who did it, by name: the log stores only the actor id.
+    return paginate(this.logs, filter, query, { populate: { path: 'actorId', select: 'name email' } });
   }
 }
