@@ -117,11 +117,24 @@ describe('Brandak marketplace (e2e)', () => {
 
     it('rotates refresh tokens and revokes the session when an old one is reused', async () => {
       const u = await registerUser(ctx);
-      const r1 = await ctx.http().post(api('/auth/refresh')).send({ refreshToken: u.refresh }).expect(200);
-      // Reusing the first (already rotated) token signals theft: the whole session is revoked.
-      await ctx.http().post(api('/auth/refresh')).send({ refreshToken: u.refresh }).expect(401);
-      await ctx.http().post(api('/auth/refresh')).send({ refreshToken: r1.body.data.refreshToken }).expect(401);
-      await ctx.http().get(api('/users/me')).set(auth(r1.body.data.accessToken)).expect(401);
+      const refresh = (refreshToken: string) => ctx.http().post(api('/auth/refresh')).send({ refreshToken });
+      const r1 = await refresh(u.refresh).expect(200);
+      const r2 = await refresh(r1.body.data.refreshToken).expect(200);
+      // Reusing a token that was rotated twice over signals theft: the whole session is revoked.
+      await refresh(u.refresh).expect(401);
+      await refresh(r2.body.data.refreshToken).expect(401);
+      await ctx.http().get(api('/users/me')).set(auth(r2.body.data.accessToken)).expect(401);
+    });
+
+    it('gives concurrent refreshes with the same token the same rotated token', async () => {
+      const u = await registerUser(ctx);
+      const refresh = (refreshToken: string) => ctx.http().post(api('/auth/refresh')).send({ refreshToken });
+      const results = await Promise.all([refresh(u.refresh), refresh(u.refresh), refresh(u.refresh)]);
+      for (const r of results) expect(r.status).toBe(200);
+      const tokens = new Set(results.map((r) => r.body.data.refreshToken));
+      expect(tokens.size).toBe(1);
+      // The session survived and the shared token keeps rotating.
+      await refresh([...tokens][0]).expect(200);
     });
 
     it('verifies the phone with a one-time code and resets the password', async () => {

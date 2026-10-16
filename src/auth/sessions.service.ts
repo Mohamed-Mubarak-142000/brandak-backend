@@ -1,12 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
-import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { Env } from '@/config/env';
 import { Session } from './session.schema';
 
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
+const safeEqual = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+/** How long the secret a rotation replaced stays usable (covers concurrent refreshes). */
+const ROTATION_GRACE_MS = 30_000;
 
 @Injectable()
 export class SessionsService {
@@ -30,26 +38,50 @@ export class SessionsService {
   /**
    * Rotates the refresh secret. Presenting an old secret for a live session means the token
    * was copied — the whole session is revoked (refresh-token reuse detection).
+   *
+   * The next secret is derived from the presented one, so rotation is idempotent: concurrent
+   * refreshes with the same token (two tabs, parallel requests) all get the same new token
+   * instead of the losers tripping reuse detection. The just-replaced secret is accepted only
+   * for ROTATION_GRACE_MS and only while it is still the latest rotation.
    */
   async rotate(refreshToken: string) {
     const [sessionId, secret] = refreshToken.split('.');
     if (!sessionId || !secret || !Types.ObjectId.isValid(sessionId)) return null;
-    const session = await this.sessions.findById(sessionId);
-    if (!session || session.revokedAt || session.expiresAt < new Date()) return null;
+    const now = new Date();
+    const live = { _id: sessionId, revokedAt: { $exists: false }, expiresAt: { $gt: now } };
 
-    const presented = Buffer.from(sha256(secret));
-    const stored = Buffer.from(session.refreshHash);
-    if (presented.length !== stored.length || !timingSafeEqual(presented, stored)) {
-      session.revokedAt = new Date();
-      await session.save();
-      return null;
-    }
+    const presentedHash = sha256(secret);
+    const next = this.deriveNext(sessionId, secret);
+    const nextHash = sha256(next);
+    const result = { sessionId, refreshToken: `${sessionId}.${next}` };
 
-    const next = randomBytes(32).toString('base64url');
-    session.refreshHash = sha256(next);
-    session.expiresAt = this.expiry();
-    await session.save();
-    return { sessionId, userId: session.userId.toString(), refreshToken: `${sessionId}.${next}` };
+    // Atomic compare-and-swap: only one concurrent caller performs the rotation.
+    const rotated = await this.sessions.findOneAndUpdate(
+      { ...live, refreshHash: presentedHash },
+      { $set: { refreshHash: nextHash, previousHash: presentedHash, rotatedAt: now, expiresAt: this.expiry() } },
+      { new: true },
+    );
+    if (rotated) return { ...result, userId: rotated.userId.toString() };
+
+    const session = await this.sessions.findOne(live);
+    if (!session) return null;
+
+    const inGrace =
+      !!session.previousHash &&
+      !!session.rotatedAt &&
+      now.getTime() - session.rotatedAt.getTime() <= ROTATION_GRACE_MS &&
+      safeEqual(session.previousHash, presentedHash) &&
+      safeEqual(session.refreshHash, nextHash);
+    if (inGrace) return { ...result, userId: session.userId.toString() };
+
+    await this.sessions.updateOne({ _id: sessionId }, { $set: { revokedAt: now } });
+    return null;
+  }
+
+  private deriveNext(sessionId: string, secret: string) {
+    return createHmac('sha256', this.config.get('JWT_REFRESH_SECRET', { infer: true }))
+      .update(`refresh-rotation:${sessionId}:${secret}`)
+      .digest('base64url');
   }
 
   async isActive(sessionId: string, userId: string) {

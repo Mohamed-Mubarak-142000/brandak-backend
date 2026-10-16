@@ -10,6 +10,13 @@ export class Session {
   @Prop({ required: true })
   refreshHash: string;
 
+  /** sha256 of the secret the current one replaced, accepted for a few seconds (concurrent refreshes). */
+  @Prop()
+  previousHash?: string;
+
+  @Prop()
+  rotatedAt?: Date;
+
   @Prop({ required: true })
   expiresAt: Date;
 
