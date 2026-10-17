@@ -131,7 +131,11 @@ export class ProductsService {
       status: ProductStatus.ACTIVE,
       brandId: { $in: await this.brands.visibleBrandIds(query.brandId ? { _id: query.brandId } : {}) },
     };
-    if (query.categoryId) filter.categoryId = { $in: await this.categories.withChildren(query.categoryId) };
+    const categoryIds = [...(query.categoryId ? [query.categoryId] : []), ...(query.categoryIds ?? [])];
+    if (categoryIds.length) {
+      const withChildren = await Promise.all(categoryIds.map((id) => this.categories.withChildren(id)));
+      filter.categoryId = { $in: withChildren.flat() };
+    }
     if (query.minPrice !== undefined || query.maxPrice !== undefined) {
       filter.price = {
         ...(query.minPrice !== undefined ? { $gte: query.minPrice } : {}),

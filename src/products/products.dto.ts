@@ -115,6 +115,13 @@ export class BrandProductsQueryDto extends PageQueryDto {
 export class ProductsQueryDto extends PageQueryDto {
   @IsOptional() @IsString() @MaxLength(100) q?: string;
   @IsOptional() @IsMongoId() categoryId?: string;
+  /** Several categories at once (comma-separated ids); products in any of them match. */
+  @IsOptional()
+  @Transform(({ value }) => (Array.isArray(value) ? value : String(value).split(',')).map((v: string) => v.trim()).filter(Boolean))
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsMongoId({ each: true })
+  categoryIds?: string[];
   @IsOptional() @IsMongoId() brandId?: string;
 
   @IsOptional()

@@ -437,6 +437,13 @@ describe('Brandak marketplace (e2e)', () => {
       expect(denied.body.error.code).toBe('NO_BRAND');
     });
 
+    it('filters products by several categories at once', async () => {
+      const cats = (await ctx.http().get(api('/categories')).expect(200)).body.data;
+      const ids = cats.slice(0, 2).map((c: any) => c._id).join(',');
+      await ctx.http().get(api(`/products?categoryIds=${ids}`)).expect(200);
+      await ctx.http().get(api('/products?categoryIds=nope')).expect(400);
+    });
+
     it('searches published products with Arabic normalization and filters', async () => {
       const { owner, slug } = await onboardBrand('Search Brand');
       await createProduct(owner.token, { title: 'شنطة جلد طبيعي', price: 900, tags: ['حقائب'] }).then((r) => expect(r.status).toBe(201));
