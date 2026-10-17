@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser, CurrentUser, Roles } from '@/common/decorators';
 import { AccountStatus, Role } from '@/common/enums';
@@ -34,6 +34,27 @@ export class AdminUsersController {
     // Suspension takes effect immediately: every open session is revoked.
     if (dto.status === AccountStatus.SUSPENDED) await this.sessions.revokeAllForUser(id);
     await this.audit.log({ actorId: admin.userId, actorType: 'ADMIN', action: `USER_${dto.status}`, entityType: 'User', entityId: id });
+    return user;
+  }
+
+  /** Soft delete: the account can't sign in and every session ends now. Reversible with /restore. */
+  @HttpCode(200)
+  @Post(':id/delete')
+  async softDelete(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    if (id === admin.userId) throw AppError.forbidden('SELF_ACTION', 'You cannot delete your own account');
+    const target = await this.users.getById(id);
+    if (target.roles.includes(Role.SUPER_ADMIN)) throw AppError.forbidden('ADMIN_PROTECTED', 'Admin accounts cannot be deleted here');
+    const user = await this.users.setDeleted(id, admin.userId, true);
+    await this.sessions.revokeAllForUser(id);
+    await this.audit.log({ actorId: admin.userId, actorType: 'ADMIN', action: 'USER_DELETED', entityType: 'User', entityId: id });
+    return user;
+  }
+
+  @HttpCode(200)
+  @Post(':id/restore')
+  async restore(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    const user = await this.users.setDeleted(id, admin.userId, false);
+    await this.audit.log({ actorId: admin.userId, actorType: 'ADMIN', action: 'USER_RESTORED', entityType: 'User', entityId: id });
     return user;
   }
 }

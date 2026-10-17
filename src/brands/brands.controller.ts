@@ -100,4 +100,17 @@ export class AdminBrandsController {
   reinstate(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
     return this.brands.reinstate(admin.userId, id);
   }
+
+  /** Soft delete: reversible with /restore. */
+  @HttpCode(200)
+  @Post(':id/delete')
+  softDelete(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.brands.softDelete(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post(':id/restore')
+  restore(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.brands.restore(admin.userId, id);
+  }
 }

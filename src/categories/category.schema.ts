@@ -28,6 +28,13 @@ export class Category {
   /** Store types this category is offered to. Empty = every type (admin-created and legacy categories). */
   @Prop({ type: [String], enum: StoreType, default: [] })
   storeTypes: StoreType[];
+
+  /** Soft delete (also deactivates); restore unsets it and reactivates. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
 }
 
 export const CategorySchema = SchemaFactory.createForClass(Category);

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { AccountStatus, Role } from '@/common/enums';
 
 @Schema({ timestamps: true })
@@ -27,6 +27,13 @@ export class User {
 
   @Prop()
   phoneVerifiedAt?: Date;
+
+  /** Soft delete: can't sign in, hidden from admin lists by default; restore unsets it. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
 
   createdAt: Date;
   updatedAt: Date;

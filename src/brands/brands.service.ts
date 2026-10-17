@@ -41,12 +41,13 @@ export class BrandsService {
   /** A brand is visible (and can take orders) when approved and its subscription is running. */
   visibleFilter(): FilterQuery<Brand> {
     const graceMs = this.config.get('SUBSCRIPTION_GRACE_DAYS', { infer: true }) * 86_400_000;
-    return { status: BrandStatus.ACTIVE, subscriptionEndsAt: { $gt: new Date(Date.now() - graceMs) } };
+    return { status: BrandStatus.ACTIVE, subscriptionEndsAt: { $gt: new Date(Date.now() - graceMs) }, deletedAt: null };
   }
 
-  isVisible(brand: Pick<Brand, 'status' | 'subscriptionEndsAt'>) {
+  isVisible(brand: Pick<Brand, 'status' | 'subscriptionEndsAt'> & { deletedAt?: Date | null }) {
     const graceMs = this.config.get('SUBSCRIPTION_GRACE_DAYS', { infer: true }) * 86_400_000;
     return (
+      !brand.deletedAt &&
       brand.status === BrandStatus.ACTIVE &&
       !!brand.subscriptionEndsAt &&
       brand.subscriptionEndsAt.getTime() > Date.now() - graceMs
@@ -175,7 +176,7 @@ export class BrandsService {
   // ---------- Admin ----------
 
   async adminList(query: AdminBrandsQueryDto) {
-    const filter: FilterQuery<Brand> = {};
+    const filter: FilterQuery<Brand> = { deletedAt: query.deleted ? { $ne: null } : null };
     if (query.status) filter.status = query.status;
     if (query.storeType) Object.assign(filter, this.storeTypeFilter(query.storeType));
     if (query.q?.trim()) filter.searchText = new RegExp(escapeRegex(normalizeSearchText(query.q)));
@@ -220,6 +221,36 @@ export class BrandsService {
       title: 'تمت إعادة تفعيل المتجر',
       body: 'تقدر تكمّل البيع على دكاكين.',
     });
+  }
+
+  // ---------- Admin: soft delete ----------
+
+  /** Hides the store from customers and blocks its owner's desk; orders keep their snapshots. */
+  async softDelete(adminId: string, id: string) {
+    const brand = await this.brands.findOneAndUpdate(
+      { _id: id, deletedAt: null },
+      { $set: { deletedAt: new Date(), deletedBy: new Types.ObjectId(adminId) } },
+      { new: true },
+    );
+    if (!brand) return this.deleteStateError(id, 'already');
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'BRAND_DELETED', entityType: 'Brand', entityId: brand._id });
+    return this.toOwnerView(brand);
+  }
+
+  async restore(adminId: string, id: string) {
+    const brand = await this.brands.findOneAndUpdate(
+      { _id: id, deletedAt: { $ne: null } },
+      { $unset: { deletedAt: 1, deletedBy: 1 } },
+      { new: true },
+    );
+    if (!brand) return this.deleteStateError(id, 'not-deleted');
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'BRAND_RESTORED', entityType: 'Brand', entityId: brand._id });
+    return this.toOwnerView(brand);
+  }
+
+  private async deleteStateError(id: string, why: 'already' | 'not-deleted'): Promise<never> {
+    if (!(await this.brands.exists({ _id: id }))) throw AppError.notFound('Brand');
+    throw AppError.conflict('INVALID_STATE', why === 'already' ? 'Brand is already deleted' : 'Brand is not deleted');
   }
 
   // ---------- Helpers ----------

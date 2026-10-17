@@ -42,6 +42,7 @@ export class SubscriptionJobs {
     const brands = await this.brands
       .find({
         status: BrandStatus.ACTIVE,
+        deletedAt: null,
         subscriptionEndsAt: { $gt: new Date(now.getTime() - 2 * DAY_MS), $lte: new Date(now.getTime() + 7 * DAY_MS) },
       })
       .select('subscriptionEndsAt name')

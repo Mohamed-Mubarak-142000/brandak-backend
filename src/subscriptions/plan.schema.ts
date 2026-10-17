@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 
 @Schema({ _id: false })
 export class PlanLimits {
@@ -40,6 +40,13 @@ export class SubscriptionPlan {
 
   @Prop({ default: 0 })
   sortOrder: number;
+
+  /** Soft delete (also deactivates); restore unsets it and reactivates. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
 }
 
 export type SubscriptionPlanDocument = HydratedDocument<SubscriptionPlan>;

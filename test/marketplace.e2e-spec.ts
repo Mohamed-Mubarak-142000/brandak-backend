@@ -697,4 +697,70 @@ describe('Brandak marketplace (e2e)', () => {
         .expect(404);
     });
   });
+  // ---------------------------------------------------------------- Admin soft delete
+
+  describe('admin soft delete', () => {
+    it('hides a deleted store and locks its owner out until it is restored', async () => {
+      const { owner, brandId, slug } = await onboardBrand('Deleted Store');
+      await ctx.http().get(api(`/brands/${slug}`)).expect(200);
+
+      await ctx.http().post(api(`/admin/brands/${brandId}/delete`)).set(auth(admin)).expect(200);
+      await ctx.http().post(api(`/admin/brands/${brandId}/delete`)).set(auth(admin)).expect(409);
+      await ctx.http().get(api(`/brands/${slug}`)).expect(404);
+      const me = await ctx.http().get(api('/brands/me')).set(auth(owner.token)).expect(403);
+      expect(me.body.error.code).toBe('BRAND_DELETED');
+      const live = await ctx.http().get(api('/admin/brands?limit=100')).set(auth(admin)).expect(200);
+      expect(live.body.data.map((b: any) => b._id)).not.toContain(brandId);
+      const gone = await ctx.http().get(api('/admin/brands?deleted=true&limit=100')).set(auth(admin)).expect(200);
+      expect(gone.body.data.map((b: any) => b._id)).toContain(brandId);
+
+      await ctx.http().post(api(`/admin/brands/${brandId}/restore`)).set(auth(admin)).expect(200);
+      await ctx.http().get(api(`/brands/${slug}`)).expect(200);
+      await ctx.http().get(api('/brands/me')).set(auth(owner.token)).expect(200);
+    });
+
+    it('signs a deleted user out, blocks sign-in, and protects admins', async () => {
+      const u = await registerUser(ctx);
+      await ctx.http().post(api(`/admin/users/${u.id}/delete`)).set(auth(admin)).expect(200);
+      await ctx.http().get(api('/users/me')).set(auth(u.token)).expect(401);
+      await ctx.http().post(api('/auth/login')).send({ identifier: u.email, password: 'Passw0rd!' }).expect(401);
+
+      await ctx.http().post(api(`/admin/users/${u.id}/restore`)).set(auth(admin)).expect(200);
+      await ctx.http().post(api('/auth/login')).send({ identifier: u.email, password: 'Passw0rd!' }).expect(200);
+
+      const self = await ctx.http().get(api('/users/me')).set(auth(admin)).expect(200);
+      const res = await ctx.http().post(api(`/admin/users/${self.body.data.id}/delete`)).set(auth(admin)).expect(403);
+      expect(res.body.error.code).toBe('SELF_ACTION');
+    });
+
+    it('hides deleted categories and plans and brings them back on restore', async () => {
+      const cat = await ctx.http().post(api('/admin/categories')).set(auth(admin)).send({ nameAr: 'مؤقت', nameEn: 'Temp', slug: 'temp-cat' }).expect(201);
+      const catId = cat.body.data._id;
+      const slugs = async () => (await ctx.http().get(api('/categories')).expect(200)).body.data.map((c: any) => c.slug);
+      await ctx.http().post(api(`/admin/categories/${catId}/delete`)).set(auth(admin)).expect(200);
+      expect(await slugs()).not.toContain('temp-cat');
+      await ctx.http().post(api(`/admin/categories/${catId}/restore`)).set(auth(admin)).expect(200);
+      expect(await slugs()).toContain('temp-cat');
+
+      const codes = async () => (await ctx.http().get(api('/subscription-plans')).expect(200)).body.data.map((p: any) => p.code);
+      await ctx.http().post(api(`/admin/plans/${growthPlanId}/delete`)).set(auth(admin)).expect(200);
+      expect(await codes()).not.toContain('GROWTH');
+      await ctx.http().post(api(`/admin/plans/${growthPlanId}/restore`)).set(auth(admin)).expect(200);
+      expect(await codes()).toContain('GROWTH');
+    });
+
+    it('deletes a report only once it is handled', async () => {
+      const { brandId } = await onboardBrand('Reported Store');
+      const u = await registerUser(ctx);
+      const rep = await ctx.http().post(api('/reports')).set(auth(u.token)).send({ targetType: 'BRAND', targetId: brandId, reason: 'SPAM' }).expect(201);
+      const id = rep.body.data.id;
+      const open = await ctx.http().post(api(`/admin/reports/${id}/delete`)).set(auth(admin)).expect(409);
+      expect(open.body.error.code).toBe('REPORT_OPEN');
+      await ctx.http().patch(api(`/admin/reports/${id}`)).set(auth(admin)).send({ status: 'DISMISSED', resolutionNote: 'Not spam' }).expect(200);
+      await ctx.http().post(api(`/admin/reports/${id}/delete`)).set(auth(admin)).expect(200);
+      const list = await ctx.http().get(api('/admin/reports?limit=100')).set(auth(admin)).expect(200);
+      expect(list.body.data.map((r: any) => r._id)).not.toContain(id);
+      await ctx.http().post(api(`/admin/reports/${id}/restore`)).set(auth(admin)).expect(200);
+    });
+  });
 });

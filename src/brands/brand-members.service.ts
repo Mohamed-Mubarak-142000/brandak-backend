@@ -2,11 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types } from 'mongoose';
 import { BrandMemberRole } from '@/common/enums';
+import { Brand } from './brand.schema';
 import { BrandMember } from './brand-member.schema';
 
 @Injectable()
 export class BrandMembersService {
-  constructor(@InjectModel(BrandMember.name) private readonly members: Model<BrandMember>) {}
+  constructor(
+    @InjectModel(BrandMember.name) private readonly members: Model<BrandMember>,
+    @InjectModel(Brand.name) private readonly brands: Model<Brand>,
+  ) {}
+
+  /** A soft-deleted store locks its owner out of the desk until an admin restores it. */
+  async isBrandDeleted(brandId: Types.ObjectId | string) {
+    return !!(await this.brands.exists({ _id: brandId, deletedAt: { $ne: null } }));
+  }
 
   findForUser(userId: string) {
     return this.members.findOne({ userId: new Types.ObjectId(userId) }).lean();

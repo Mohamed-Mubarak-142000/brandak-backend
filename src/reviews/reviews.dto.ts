@@ -1,4 +1,5 @@
-import { IsEnum, IsIn, IsInt, IsMongoId, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsMongoId, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
 import { ReportStatus, ReportTarget, ReviewStatus } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 
@@ -39,6 +40,8 @@ export class CreateReportDto {
 export class ReportsQueryDto extends PageQueryDto {
   @IsOptional() @IsEnum(ReportStatus) status?: ReportStatus;
   @IsOptional() @IsEnum(ReportTarget) targetType?: ReportTarget;
+  /** true = only soft-deleted reports. */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true') @IsBoolean() deleted?: boolean;
 }
 
 export class ResolveReportDto {

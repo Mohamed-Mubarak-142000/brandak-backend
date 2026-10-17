@@ -45,7 +45,7 @@ export class SubscriptionsService {
   // ---------- Plans ----------
 
   listActivePlans() {
-    return this.plans.find({ isActive: true }).sort({ sortOrder: 1, priceMonthly: 1 }).lean();
+    return this.plans.find({ isActive: true, deletedAt: null }).sort({ sortOrder: 1, priceMonthly: 1 }).lean();
   }
 
   listAllPlans() {
@@ -57,10 +57,39 @@ export class SubscriptionsService {
   }
 
   async updatePlan(adminId: string, id: string, dto: UpdatePlanDto) {
-    const plan = await this.plans.findByIdAndUpdate(id, dto, { new: true });
+    // A deleted plan is edited only after it is restored.
+    const plan = await this.plans.findOneAndUpdate({ _id: id, deletedAt: null }, dto, { new: true });
     if (!plan) throw AppError.notFound('Plan');
     await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'PLAN_UPDATED', entityType: 'SubscriptionPlan', entityId: plan._id, data: { ...dto } });
     return plan;
+  }
+
+  /** Soft delete: no new subscriptions; running ones keep their plan snapshot. */
+  async deletePlan(adminId: string, id: string) {
+    const plan = await this.plans.findOneAndUpdate(
+      { _id: id, deletedAt: null },
+      { $set: { deletedAt: new Date(), deletedBy: new Types.ObjectId(adminId), isActive: false } },
+      { new: true },
+    );
+    if (!plan) return this.planStateError(id, true);
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'PLAN_DELETED', entityType: 'SubscriptionPlan', entityId: plan._id });
+    return plan;
+  }
+
+  async restorePlan(adminId: string, id: string) {
+    const plan = await this.plans.findOneAndUpdate(
+      { _id: id, deletedAt: { $ne: null } },
+      { $unset: { deletedAt: 1, deletedBy: 1 }, $set: { isActive: true } },
+      { new: true },
+    );
+    if (!plan) return this.planStateError(id, false);
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'PLAN_RESTORED', entityType: 'SubscriptionPlan', entityId: plan._id });
+    return plan;
+  }
+
+  private async planStateError(id: string, deleting: boolean): Promise<never> {
+    if (!(await this.plans.exists({ _id: id }))) throw AppError.notFound('Plan');
+    throw AppError.conflict('INVALID_STATE', deleting ? 'Plan is already deleted' : 'Plan is not deleted');
   }
 
   // ---------- Brand owner ----------

@@ -114,4 +114,16 @@ export class AdminSubscriptionsController {
   updatePlan(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string, @Body() dto: UpdatePlanDto) {
     return this.subscriptions.updatePlan(admin.userId, id, dto);
   }
+
+  @HttpCode(200)
+  @Post('plans/:id/delete')
+  deletePlan(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.subscriptions.deletePlan(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post('plans/:id/restore')
+  restorePlan(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.subscriptions.restorePlan(admin.userId, id);
+  }
 }

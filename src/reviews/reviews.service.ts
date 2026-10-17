@@ -58,7 +58,7 @@ export class ReviewsService {
   async listForProduct(productId: string, query: PageQueryDto) {
     const product = await this.products.exists({ _id: productId, status: ProductStatus.ACTIVE });
     if (!product) throw AppError.notFound('Product');
-    const filter = { productId: new Types.ObjectId(productId), status: ReviewStatus.VISIBLE };
+    const filter = { productId: new Types.ObjectId(productId), status: ReviewStatus.VISIBLE, deletedAt: null };
     const [page, distribution] = await Promise.all([
       paginate(this.reviews, filter, query),
       this.reviews.aggregate<{ _id: number; count: number }>([
@@ -71,7 +71,7 @@ export class ReviewsService {
   }
 
   async listMine(userId: string, query: PageQueryDto) {
-    const page = await paginate(this.reviews, { userId: new Types.ObjectId(userId) }, query);
+    const page = await paginate(this.reviews, { userId: new Types.ObjectId(userId), deletedAt: null }, query);
     return new PageResult(page.items.map((r) => ({ ...this.toView(r), status: r.status })), page.page, page.limit, page.total);
   }
 
@@ -81,7 +81,8 @@ export class ReviewsService {
       [ReportTarget.PRODUCT]: this.products,
       [ReportTarget.BRAND]: this.brands,
     };
-    if (!(await models[dto.targetType].exists({ _id: dto.targetId }))) throw AppError.notFound(dto.targetType);
+    // Deleted stores and reviews can no longer be reported (products have no deletedAt, so null matches).
+    if (!(await models[dto.targetType].exists({ _id: dto.targetId, deletedAt: null }))) throw AppError.notFound(dto.targetType);
     try {
       const report = await this.reports.create({
         reporterId: new Types.ObjectId(userId),
@@ -100,7 +101,7 @@ export class ReviewsService {
   // ---------- Admin ----------
 
   async listReports(query: ReportsQueryDto) {
-    const filter: FilterQuery<Report> = {};
+    const filter: FilterQuery<Report> = { deletedAt: query.deleted ? { $ne: null } : null };
     if (query.status) filter.status = query.status;
     if (query.targetType) filter.targetType = query.targetType;
     const page = await paginate(this.reports, filter, query, { populate: 'reporterId' });
@@ -108,16 +109,16 @@ export class ReviewsService {
     // One query per target type, so moderators see what was reported without extra requests.
     const idsOf = (type: ReportTarget) => page.items.filter((r) => r.targetType === type).map((r) => r.targetId);
     const [reviews, products, brands] = await Promise.all([
-      this.reviews.find({ _id: { $in: idsOf(ReportTarget.REVIEW) } }).select('rating comment userName status productId').lean(),
+      this.reviews.find({ _id: { $in: idsOf(ReportTarget.REVIEW) } }).select('rating comment userName status productId deletedAt').lean(),
       this.products.find({ _id: { $in: idsOf(ReportTarget.PRODUCT) } }).select('title status brandId images').lean(),
-      this.brands.find({ _id: { $in: idsOf(ReportTarget.BRAND) } }).select('name slug status').lean(),
+      this.brands.find({ _id: { $in: idsOf(ReportTarget.BRAND) } }).select('name slug status deletedAt').lean(),
     ]);
     const summary = (r: (typeof page.items)[number]) => {
       const id = r.targetId.toString();
       switch (r.targetType) {
         case ReportTarget.REVIEW: {
           const t = reviews.find((x) => x._id.toString() === id);
-          return t && { title: t.comment || `تقييم ${t.rating}/5`, subtitle: t.userName, status: t.status, productId: t.productId.toString() };
+          return t && { title: t.comment || `تقييم ${t.rating}/5`, subtitle: t.userName, status: t.status, productId: t.productId.toString(), deleted: !!t.deletedAt };
         }
         case ReportTarget.PRODUCT: {
           const t = products.find((x) => x._id.toString() === id);
@@ -125,7 +126,7 @@ export class ReviewsService {
         }
         case ReportTarget.BRAND: {
           const t = brands.find((x) => x._id.toString() === id);
-          return t && { title: t.name, subtitle: t.slug, status: t.status };
+          return t && { title: t.name, subtitle: t.slug, status: t.status, deleted: !!t.deletedAt };
         }
       }
     };
@@ -160,6 +161,49 @@ export class ReviewsService {
     return this.toView(review.toObject());
   }
 
+  /** Handled reports only: an open one must be resolved or dismissed first. */
+  async deleteReport(adminId: string, id: string) {
+    const report = await this.reports.findOneAndUpdate(
+      { _id: id, deletedAt: null, status: { $ne: ReportStatus.OPEN } },
+      { $set: { deletedAt: new Date(), deletedBy: new Types.ObjectId(adminId) } },
+      { new: true },
+    );
+    if (!report) {
+      const r = await this.reports.findById(id).select('status deletedAt').lean();
+      if (!r) throw AppError.notFound('Report');
+      if (r.status === ReportStatus.OPEN) throw AppError.conflict('REPORT_OPEN', 'Resolve or dismiss the report before deleting it');
+      throw AppError.conflict('INVALID_STATE', 'Report is already deleted');
+    }
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'REPORT_DELETED', entityType: 'Report', entityId: report._id });
+    return report;
+  }
+
+  async restoreReport(adminId: string, id: string) {
+    const report = await this.reports.findOneAndUpdate({ _id: id, deletedAt: { $ne: null } }, { $unset: { deletedAt: 1, deletedBy: 1 } }, { new: true });
+    if (!report) {
+      if (!(await this.reports.exists({ _id: id }))) throw AppError.notFound('Report');
+      throw AppError.conflict('INVALID_STATE', 'Report is not deleted');
+    }
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'REPORT_RESTORED', entityType: 'Report', entityId: report._id });
+    return report;
+  }
+
+  /** Soft delete a review; ratings are recomputed without it. */
+  async setReviewDeleted(adminId: string, id: string, deleted: boolean) {
+    const review = await this.reviews.findOneAndUpdate(
+      { _id: id, deletedAt: deleted ? null : { $ne: null } },
+      deleted ? { $set: { deletedAt: new Date(), deletedBy: new Types.ObjectId(adminId) } } : { $unset: { deletedAt: 1, deletedBy: 1 } },
+      { new: true },
+    );
+    if (!review) {
+      if (!(await this.reviews.exists({ _id: id }))) throw AppError.notFound('Review');
+      throw AppError.conflict('INVALID_STATE', deleted ? 'Review is already deleted' : 'Review is not deleted');
+    }
+    await this.refreshRatings(review.productId, review.brandId);
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: deleted ? 'REVIEW_DELETED' : 'REVIEW_RESTORED', entityType: 'Review', entityId: review._id });
+    return this.toView(review.toObject());
+  }
+
   async archiveProduct(adminId: string, id: string, reason: string) {
     const product = await this.products.findByIdAndUpdate(id, { $set: { status: ProductStatus.ARCHIVED } }, { new: true });
     if (!product) throw AppError.notFound('Product');
@@ -170,7 +214,7 @@ export class ReviewsService {
   private async refreshRatings(productId: Types.ObjectId, brandId: Types.ObjectId) {
     const stats = async (match: FilterQuery<Review>) => {
       const [s] = await this.reviews.aggregate<{ avg: number; count: number }>([
-        { $match: { ...match, status: ReviewStatus.VISIBLE } },
+        { $match: { ...match, status: ReviewStatus.VISIBLE, deletedAt: null } },
         { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } },
       ]);
       return { ratingAvg: s ? Math.round(s.avg * 10) / 10 : 0, ratingCount: s?.count ?? 0 };

@@ -62,7 +62,7 @@ export class AuthService {
     const rotated = await this.sessions.rotate(refreshToken);
     if (!rotated) throw new UnauthorizedException('Invalid refresh token');
     const user = await this.users.getById(rotated.userId);
-    if (user.status !== AccountStatus.ACTIVE) {
+    if (user.status !== AccountStatus.ACTIVE || user.deletedAt) {
       await this.sessions.revoke(rotated.sessionId);
       throw new UnauthorizedException('Account is not active');
     }

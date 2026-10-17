@@ -67,6 +67,30 @@ export class AdminModerationController {
     return this.reviews.setReviewStatus(admin.userId, id, dto.status);
   }
 
+  @HttpCode(200)
+  @Post('reports/:id/delete')
+  deleteReport(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.reviews.deleteReport(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post('reports/:id/restore')
+  restoreReport(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.reviews.restoreReport(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post('reviews/:id/delete')
+  deleteReview(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.reviews.setReviewDeleted(admin.userId, id, true);
+  }
+
+  @HttpCode(200)
+  @Post('reviews/:id/restore')
+  restoreReview(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.reviews.setReviewDeleted(admin.userId, id, false);
+  }
+
   @HttpCode(204)
   @Post('products/:id/archive')
   archiveProduct(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string, @Body() dto: ReasonDto) {

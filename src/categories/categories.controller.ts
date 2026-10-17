@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Public, Roles } from '@/common/decorators';
+import { AuthUser, CurrentUser, Public, Roles } from '@/common/decorators';
 import { Role } from '@/common/enums';
 import { GOVERNORATES } from '@/common/governorates';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
@@ -46,5 +46,17 @@ export class AdminCategoriesController {
   @Patch(':id')
   update(@Param('id', ParseObjectIdPipe) id: string, @Body() dto: UpdateCategoryDto) {
     return this.categories.update(id, dto);
+  }
+
+  @HttpCode(200)
+  @Post(':id/delete')
+  softDelete(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.categories.softDelete(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post(':id/restore')
+  restore(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.categories.restore(admin.userId, id);
   }
 }

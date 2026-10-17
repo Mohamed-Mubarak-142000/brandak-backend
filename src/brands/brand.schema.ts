@@ -110,6 +110,13 @@ export class Brand {
   @Prop()
   approvedAt?: Date;
 
+  /** Soft delete: hidden everywhere except the admin "deleted" filter; restore unsets it. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
+
   createdAt: Date;
   updatedAt: Date;
 }

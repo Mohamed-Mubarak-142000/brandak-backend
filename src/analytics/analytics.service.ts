@@ -151,10 +151,13 @@ export class AnalyticsService {
       orderStats,
       expiringSoon,
     ] = await Promise.all([
-      this.brandModel.aggregate<{ _id: BrandStatus; count: number }>([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
+      this.brandModel.aggregate<{ _id: BrandStatus; count: number }>([
+        { $match: { deletedAt: null } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
       this.brandModel.countDocuments(this.brands.visibleFilter()),
-      this.users.countDocuments(),
-      this.users.countDocuments({ createdAt: { $gte: range.from, $lt: range.to } }),
+      this.users.countDocuments({ deletedAt: null }),
+      this.users.countDocuments({ deletedAt: null, createdAt: { $gte: range.from, $lt: range.to } }),
       this.subscriptions
         .find({ status: SubscriptionStatus.ACTIVE, startsAt: { $lte: now }, endsAt: { $gt: now } })
         .select('planSnapshot')
@@ -177,6 +180,7 @@ export class AnalyticsService {
       ]),
       this.brandModel.countDocuments({
         status: BrandStatus.ACTIVE,
+        deletedAt: null,
         subscriptionEndsAt: { $gt: now, $lte: new Date(now.getTime() + 7 * DAY_MS) },
       }),
     ]);

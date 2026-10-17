@@ -30,6 +30,13 @@ export class Review {
   @Prop({ type: String, enum: ReviewStatus, default: ReviewStatus.VISIBLE })
   status: ReviewStatus;
 
+  /** Soft delete: hidden everywhere except the admin; restore unsets it. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
+
   createdAt: Date;
 }
 
@@ -63,6 +70,13 @@ export class Report {
 
   @Prop()
   resolutionNote?: string;
+
+  /** Soft delete: hidden everywhere except the admin; restore unsets it. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
 
   createdAt: Date;
 }

@@ -1,5 +1,5 @@
 import { OmitType, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -185,6 +185,12 @@ export class AdminBrandsQueryDto extends PageQueryDto {
   @IsOptional()
   @IsEnum(StoreType)
   storeType?: StoreType;
+
+  /** true = only soft-deleted stores; otherwise deleted stores are left out. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  deleted?: boolean;
 }
 
 export class ReasonDto {

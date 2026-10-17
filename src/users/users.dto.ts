@@ -1,4 +1,5 @@
-import { IsEnum, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsEnum, IsOptional, IsString, Length, MaxLength } from 'class-validator';
 import { AccountStatus } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 
@@ -18,6 +19,12 @@ export class AdminUsersQueryDto extends PageQueryDto {
   @IsOptional()
   @IsEnum(AccountStatus)
   status?: AccountStatus;
+
+  /** true = only soft-deleted accounts. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  deleted?: boolean;
 }
 
 export class SetUserStatusDto {
