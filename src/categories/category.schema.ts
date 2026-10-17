@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
+import { StoreType } from '@/common/enums';
 
 @Schema({ timestamps: true })
 export class Category {
@@ -23,7 +24,12 @@ export class Category {
 
   @Prop({ default: true })
   isActive: boolean;
+
+  /** Store types this category is offered to. Empty = every type (admin-created and legacy categories). */
+  @Prop({ type: [String], enum: StoreType, default: [] })
+  storeTypes: StoreType[];
 }
 
 export const CategorySchema = SchemaFactory.createForClass(Category);
 CategorySchema.index({ parentId: 1, sortOrder: 1 });
+CategorySchema.index({ storeTypes: 1 });

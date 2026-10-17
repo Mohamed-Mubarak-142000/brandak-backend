@@ -300,6 +300,19 @@ describe('Brandak marketplace (e2e)', () => {
       expect(admins.body.data.map((b: any) => b.slug)).toContain(showroom.slug);
     });
 
+    it('offers each store type its own categories plus the shared ones', async () => {
+      const slugs = async (q = '') => (await ctx.http().get(api(`/categories${q}`)).expect(200)).body.data.map((c: any) => c.slug);
+      const warehouse = await slugs('?storeType=WAREHOUSE');
+      expect(warehouse).toEqual(expect.arrayContaining(['groceries', 'building', 'appliances', 'other']));
+      expect(warehouse).not.toContain('handmade');
+      const showroom = await slugs('?storeType=SHOWROOM');
+      expect(showroom).toEqual(expect.arrayContaining(['appliances', 'furniture', 'cars']));
+      expect(showroom).not.toContain('groceries');
+      // Without a type, every active category comes back, as before.
+      expect((await slugs()).length).toBeGreaterThan(warehouse.length);
+      await ctx.http().get(api('/categories?storeType=NOPE')).expect(400);
+    });
+
     it('rejects a reused transfer reference and lets the owner resubmit after rejection', async () => {
       const first = await onboardBrand('Ref Brand A', { reference: 'SAME-REF-001' });
       expect(first.brandId).toBeDefined();

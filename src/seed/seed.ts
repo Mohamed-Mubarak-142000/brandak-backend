@@ -28,6 +28,8 @@ export async function seed(app: { get: <T>(token: any) => T }, log = console.log
   }
   for (const category of CATEGORIES) {
     await categories.updateOne({ slug: category.slug }, { $setOnInsert: { ...category, parentId: null } }, { upsert: true });
+    // Categories seeded before store types existed get theirs; an admin edit is never overwritten.
+    await categories.updateOne({ slug: category.slug, storeTypes: { $exists: false } }, { $set: { storeTypes: category.storeTypes } });
   }
   log(`Seeded ${PLANS.length} plans and ${CATEGORIES.length} categories`);
 

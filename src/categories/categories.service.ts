@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { FilterQuery, Model, Types } from 'mongoose';
+import { StoreType } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { Category } from './category.schema';
 import { CreateCategoryDto, UpdateCategoryDto } from './categories.dto';
@@ -9,8 +10,13 @@ import { CreateCategoryDto, UpdateCategoryDto } from './categories.dto';
 export class CategoriesService {
   constructor(@InjectModel(Category.name) private readonly categories: Model<Category>) {}
 
-  listActive() {
-    return this.categories.find({ isActive: true }).sort({ sortOrder: 1, nameEn: 1 }).lean();
+  /** Active categories; with a store type, only those offered to it (plus the ones for every type). */
+  listActive(storeType?: StoreType) {
+    const filter: FilterQuery<Category> = { isActive: true };
+    if (storeType) {
+      filter.$or = [{ storeTypes: storeType }, { storeTypes: { $size: 0 } }, { storeTypes: { $exists: false } }];
+    }
+    return this.categories.find(filter).sort({ sortOrder: 1, nameEn: 1 }).lean();
   }
 
   listAll() {

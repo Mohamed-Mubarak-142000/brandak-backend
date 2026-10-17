@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public, Roles } from '@/common/decorators';
 import { Role } from '@/common/enums';
 import { GOVERNORATES } from '@/common/governorates';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
 import { CategoriesService } from './categories.service';
-import { CreateCategoryDto, UpdateCategoryDto } from './categories.dto';
+import { CategoriesQueryDto, CreateCategoryDto, UpdateCategoryDto } from './categories.dto';
 
 @ApiTags('Catalog')
 @Controller()
@@ -14,8 +14,8 @@ export class CategoriesController {
 
   @Public()
   @Get('categories')
-  list() {
-    return this.categories.listActive();
+  list(@Query() query: CategoriesQueryDto) {
+    return this.categories.listActive(query.storeType);
   }
 
   /** Reference data for address forms and shipping zones. */
