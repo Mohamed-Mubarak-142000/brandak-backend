@@ -30,14 +30,14 @@ describe('Brandak marketplace (e2e)', () => {
   });
 
   /** Creates a brand, gets it approved and pays for a plan; returns the owner token and ids. */
-  async function onboardBrand(name: string, opts: { planId?: string; reference?: string } = {}) {
+  async function onboardBrand(name: string, opts: { planId?: string; reference?: string; storeType?: string } = {}) {
     const owner = await registerUser(ctx, `${name} Owner`);
     const logoFileId = await upload(ctx, owner.token, 'BRAND_LOGO');
     const applied = await ctx
       .http()
       .post(api('/brand-applications'))
       .set(auth(owner.token))
-      .send({ name, categoryIds: [categoryId], contact: { phone: '01011112222' }, logoFileId })
+      .send({ storeType: opts.storeType ?? 'BRAND', name, categoryIds: [categoryId], contact: { phone: '01011112222' }, logoFileId })
       .expect(201);
     const brandId = applied.body.data.id;
     await ctx.http().post(api(`/admin/brands/${brandId}/approve`)).set(auth(admin)).expect(200);
@@ -196,7 +196,7 @@ describe('Brandak marketplace (e2e)', () => {
         .http()
         .post(api('/brand-applications'))
         .set(auth(owner.token))
-        .send({ name: 'Noura Handmade', categoryIds: [categoryId], contact: { phone: '01011112222' } })
+        .send({ storeType: 'BRAND', name: 'Noura Handmade', categoryIds: [categoryId], contact: { phone: '01011112222' } })
         .expect(201);
       const brand = applied.body.data;
       expect(brand).toMatchObject({ status: 'PENDING_REVIEW', slug: 'noura-handmade', isVisible: false });
@@ -205,7 +205,7 @@ describe('Brandak marketplace (e2e)', () => {
         .http()
         .post(api('/brand-applications'))
         .set(auth(owner.token))
-        .send({ name: 'Second', categoryIds: [categoryId], contact: { phone: '01011112222' } })
+        .send({ storeType: 'SHOP', name: 'Second', categoryIds: [categoryId], contact: { phone: '01011112222' } })
         .expect(409);
 
       // Not public before approval and payment.
@@ -272,6 +272,34 @@ describe('Brandak marketplace (e2e)', () => {
       );
     });
 
+    it('requires a store type and filters stores by it, counting legacy stores as brands', async () => {
+      const owner = await registerUser(ctx);
+      await ctx
+        .http()
+        .post(api('/brand-applications'))
+        .set(auth(owner.token))
+        .send({ name: 'No Type', categoryIds: [categoryId], contact: { phone: '01011112222' } })
+        .expect(400);
+
+      const showroom = await onboardBrand('Cairo Showroom', { storeType: 'SHOWROOM' });
+      const legacy = await onboardBrand('Old Brand');
+      // Simulate a store created before storeType existed.
+      const brands = ctx.app.get<Model<Brand>>(getModelToken(Brand.name));
+      await brands.updateOne({ _id: legacy.brandId }, { $unset: { storeType: 1 } });
+
+      const slugs = async (q: string) =>
+        (await ctx.http().get(api(`/brands?limit=100${q}`)).expect(200)).body.data.map((b: any) => b.slug);
+      expect(await slugs('&storeType=SHOWROOM')).toContain(showroom.slug);
+      expect(await slugs('&storeType=SHOWROOM')).not.toContain(legacy.slug);
+      expect(await slugs('&storeType=BRAND')).toContain(legacy.slug);
+      expect(await slugs('&storeType=BRAND')).not.toContain(showroom.slug);
+
+      const legacyView = await ctx.http().get(api(`/brands/${legacy.slug}`)).expect(200);
+      expect(legacyView.body.data).toMatchObject({ storeType: 'BRAND', socialLinks: {}, contact: expect.any(Object) });
+      const admins = await ctx.http().get(api('/admin/brands?storeType=SHOWROOM&limit=100')).set(auth(admin)).expect(200);
+      expect(admins.body.data.map((b: any) => b.slug)).toContain(showroom.slug);
+    });
+
     it('rejects a reused transfer reference and lets the owner resubmit after rejection', async () => {
       const first = await onboardBrand('Ref Brand A', { reference: 'SAME-REF-001' });
       expect(first.brandId).toBeDefined();
@@ -281,7 +309,7 @@ describe('Brandak marketplace (e2e)', () => {
         .http()
         .post(api('/brand-applications'))
         .set(auth(owner.token))
-        .send({ name: 'Ref Brand B', categoryIds: [categoryId], contact: { phone: '01011112222' } })
+        .send({ storeType: 'BRAND', name: 'Ref Brand B', categoryIds: [categoryId], contact: { phone: '01011112222' } })
         .expect(201);
       const sub = await ctx
         .http()

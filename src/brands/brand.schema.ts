@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { BrandStatus } from '@/common/enums';
+import { BrandStatus, StoreType } from '@/common/enums';
 
 @Schema({ _id: false })
 export class ImageRefProp {
@@ -79,6 +79,9 @@ export class Brand {
   @Prop({ type: String, enum: BrandStatus, default: BrandStatus.PENDING_REVIEW })
   status: BrandStatus;
 
+  @Prop({ type: String, enum: StoreType, default: StoreType.BRAND })
+  storeType: StoreType;
+
   @Prop()
   statusReason?: string;
 
@@ -115,4 +118,5 @@ export type BrandDocument = HydratedDocument<Brand>;
 export const BrandSchema = SchemaFactory.createForClass(Brand);
 BrandSchema.index({ status: 1, subscriptionEndsAt: 1 });
 BrandSchema.index({ categoryIds: 1, status: 1 });
+BrandSchema.index({ storeType: 1, status: 1 });
 BrandSchema.index({ searchText: 1 });

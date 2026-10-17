@@ -20,7 +20,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { BrandStatus } from '@/common/enums';
+import { BrandStatus, StoreType } from '@/common/enums';
 import { GOVERNORATE_CODES } from '@/common/governorates';
 import { PageQueryDto } from '@/common/pagination';
 
@@ -47,6 +47,10 @@ export class SocialLinksDto {
 }
 
 export class CreateBrandApplicationDto {
+  /** Kind of business: brand, showroom, warehouse or shop. */
+  @IsEnum(StoreType)
+  storeType: StoreType;
+
   @IsString()
   @Length(2, 60)
   name: string;
@@ -160,6 +164,10 @@ export class BrandsQueryDto extends PageQueryDto {
   categoryId?: string;
 
   @IsOptional()
+  @IsEnum(StoreType)
+  storeType?: StoreType;
+
+  @IsOptional()
   @IsIn(['newest', 'rating', 'name'])
   sort?: 'newest' | 'rating' | 'name';
 }
@@ -173,6 +181,10 @@ export class AdminBrandsQueryDto extends PageQueryDto {
   @IsOptional()
   @IsEnum(BrandStatus)
   status?: BrandStatus;
+
+  @IsOptional()
+  @IsEnum(StoreType)
+  storeType?: StoreType;
 }
 
 export class ReasonDto {

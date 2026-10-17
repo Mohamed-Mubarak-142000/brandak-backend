@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, SortOrder, Types } from 'mongoose';
-import { BrandStatus, FilePurpose } from '@/common/enums';
+import { BrandStatus, FilePurpose, StoreType } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { paginate, PageResult } from '@/common/pagination';
 import { escapeRegex, normalizeEgyptPhone, normalizeSearchText, slugify } from '@/common/utils/text';
@@ -23,7 +23,7 @@ import {
 } from './brands.dto';
 
 const PUBLIC_FIELDS =
-  'name slug description logo cover categoryIds contact socialLinks settings ratingAvg ratingCount createdAt';
+  'name slug storeType description logo cover categoryIds contact socialLinks settings ratingAvg ratingCount createdAt';
 
 @Injectable()
 export class BrandsService {
@@ -80,6 +80,7 @@ export class BrandsService {
             ownerUserId: new Types.ObjectId(userId),
             name: dto.name.trim(),
             slug,
+            storeType: dto.storeType,
             description: dto.description ?? '',
             categoryIds,
             logo,
@@ -113,6 +114,7 @@ export class BrandsService {
       brand.name = dto.name.trim();
       brand.searchText = normalizeSearchText(dto.name);
     }
+    if (dto.storeType) brand.storeType = dto.storeType;
     if (dto.description !== undefined) brand.description = dto.description;
     if (dto.categoryIds) brand.categoryIds = await this.categories.requireActive(dto.categoryIds);
     if (dto.contact) brand.contact = this.normalizeContact(dto.contact);
@@ -152,6 +154,7 @@ export class BrandsService {
   async listPublic(query: BrandsQueryDto) {
     const filter: FilterQuery<Brand> = this.visibleFilter();
     if (query.categoryId) filter.categoryIds = new Types.ObjectId(query.categoryId);
+    if (query.storeType) Object.assign(filter, this.storeTypeFilter(query.storeType));
     if (query.q?.trim()) filter.searchText = new RegExp(escapeRegex(normalizeSearchText(query.q)));
     const sort: Record<string, SortOrder> =
       query.sort === 'rating'
@@ -174,6 +177,7 @@ export class BrandsService {
   async adminList(query: AdminBrandsQueryDto) {
     const filter: FilterQuery<Brand> = {};
     if (query.status) filter.status = query.status;
+    if (query.storeType) Object.assign(filter, this.storeTypeFilter(query.storeType));
     if (query.q?.trim()) filter.searchText = new RegExp(escapeRegex(normalizeSearchText(query.q)));
     const page = await paginate(this.brands, filter, query, { populate: { path: 'ownerUserId', select: 'name email phone' } });
     // Visibility is computed on the server so every client agrees on "now" and the grace period.
@@ -192,29 +196,29 @@ export class BrandsService {
 
   approve(adminId: string, id: string) {
     return this.transition(adminId, id, [BrandStatus.PENDING_REVIEW], BrandStatus.ACTIVE, 'BRAND_APPROVED', {
-      title: 'تمت الموافقة على البراند',
-      body: 'تمت مراجعة بيانات البراند والموافقة عليها.',
+      title: 'تمت الموافقة على متجرك',
+      body: 'راجعنا بيانات المتجر ووافقنا عليها. اختار باقتك وابدأ تبيع.',
     });
   }
 
   reject(adminId: string, id: string, reason: string) {
     return this.transition(adminId, id, [BrandStatus.PENDING_REVIEW], BrandStatus.REJECTED, 'BRAND_REJECTED', {
-      title: 'تم رفض طلب البراند',
+      title: 'طلب المتجر محتاج تعديلات',
       body: `السبب: ${reason}`,
     }, reason);
   }
 
   suspend(adminId: string, id: string, reason: string) {
     return this.transition(adminId, id, [BrandStatus.ACTIVE], BrandStatus.SUSPENDED, 'BRAND_SUSPENDED', {
-      title: 'تم إيقاف البراند',
+      title: 'تم إيقاف المتجر',
       body: `السبب: ${reason}`,
     }, reason);
   }
 
   reinstate(adminId: string, id: string) {
     return this.transition(adminId, id, [BrandStatus.SUSPENDED], BrandStatus.ACTIVE, 'BRAND_REINSTATED', {
-      title: 'تمت إعادة تفعيل البراند',
-      body: 'يمكنك متابعة البيع على براندك.',
+      title: 'تمت إعادة تفعيل المتجر',
+      body: 'تقدر تكمّل البيع على دكاكين.',
     });
   }
 
@@ -289,19 +293,25 @@ export class BrandsService {
     return { phone, email: contact.email?.toLowerCase(), whatsapp: whatsapp ?? undefined };
   }
 
+  /** Stores created before storeType existed have no value and count as BRAND. */
+  private storeTypeFilter(type: StoreType): FilterQuery<Brand> {
+    return type === StoreType.BRAND ? { storeType: { $in: [StoreType.BRAND, null] } } : { storeType: type };
+  }
+
   toOwnerView(brand: Brand & { _id: Types.ObjectId }) {
     return {
       id: brand._id.toString(),
       name: brand.name,
       slug: brand.slug,
+      storeType: brand.storeType ?? StoreType.BRAND,
       description: brand.description,
       logoUrl: brand.logo?.url ?? null,
       coverUrl: brand.cover?.url ?? null,
       categoryIds: brand.categoryIds.map(String),
       status: brand.status,
       statusReason: brand.statusReason ?? null,
-      contact: brand.contact,
-      socialLinks: brand.socialLinks,
+      contact: brand.contact ?? {},
+      socialLinks: brand.socialLinks ?? {},
       settings: brand.settings,
       subscriptionEndsAt: brand.subscriptionEndsAt,
       isVisible: this.isVisible(brand),
@@ -317,12 +327,14 @@ export class BrandsService {
       id: brand._id.toString(),
       name: brand.name,
       slug: brand.slug,
+      // .lean() reads skip schema defaults; stores older than storeType are brands.
+      storeType: brand.storeType ?? StoreType.BRAND,
       description: brand.description,
       logoUrl: brand.logo?.url ?? null,
       coverUrl: brand.cover?.url ?? null,
       categoryIds: (brand.categoryIds ?? []).map(String),
-      contact: brand.contact,
-      socialLinks: brand.socialLinks,
+      contact: brand.contact ?? {},
+      socialLinks: brand.socialLinks ?? {},
       shipping: s && {
         zones: s.shippingZones,
         defaultFee: s.defaultShippingFee,

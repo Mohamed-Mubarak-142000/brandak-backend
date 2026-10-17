@@ -8,6 +8,17 @@ export enum AccountStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
+/**
+ * What kind of business a store is. The marketplace is not only brands: showrooms, warehouses
+ * and shops sell here too. Stores created before this existed are treated as BRAND.
+ */
+export enum StoreType {
+  BRAND = 'BRAND',
+  SHOWROOM = 'SHOWROOM',
+  WAREHOUSE = 'WAREHOUSE',
+  SHOP = 'SHOP',
+}
+
 /** Review state only. Being visible to customers also needs a running subscription. */
 export enum BrandStatus {
   PENDING_REVIEW = 'PENDING_REVIEW',

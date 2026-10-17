@@ -1,5 +1,5 @@
 /**
- * Idempotent seed: plans, categories and the first super admin.
+ * Idempotent seed: plans, categories, the first super admin, and data backfills.
  *   npm run seed
  */
 import { NestFactory } from '@nestjs/core';
@@ -8,8 +8,9 @@ import { getModelToken } from '@nestjs/mongoose';
 import * as argon2 from 'argon2';
 import { Model } from 'mongoose';
 import { AppModule } from '@/app.module';
-import { Role } from '@/common/enums';
+import { Role, StoreType } from '@/common/enums';
 import { Env } from '@/config/env';
+import { Brand } from '@/brands/brand.schema';
 import { Category } from '@/categories/category.schema';
 import { SubscriptionPlan } from '@/subscriptions/plan.schema';
 import { User } from '@/users/user.schema';
@@ -29,6 +30,11 @@ export async function seed(app: { get: <T>(token: any) => T }, log = console.log
     await categories.updateOne({ slug: category.slug }, { $setOnInsert: { ...category, parentId: null } }, { upsert: true });
   }
   log(`Seeded ${PLANS.length} plans and ${CATEGORIES.length} categories`);
+
+  // Stores created before storeType existed were all brands.
+  const brands = app.get<Model<Brand>>(getModelToken(Brand.name));
+  const typed = await brands.updateMany({ storeType: { $exists: false } }, { $set: { storeType: StoreType.BRAND } });
+  if (typed.modifiedCount) log(`Set storeType=BRAND on ${typed.modifiedCount} existing stores`);
 
   const email = config.get('SEED_ADMIN_EMAIL', { infer: true });
   const password = config.get('SEED_ADMIN_PASSWORD', { infer: true });
