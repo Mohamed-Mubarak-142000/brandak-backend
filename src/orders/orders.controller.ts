@@ -125,4 +125,17 @@ export class AdminOrdersController {
   cancel(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string, @Body() dto: AdminCancelOrderDto) {
     return this.orders.cancelByAdmin(admin.userId, id, dto.reason);
   }
+
+  /** Delivered or cancelled orders only. Reversible with /restore. */
+  @HttpCode(200)
+  @Post(':id/delete')
+  softDelete(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.orders.softDelete(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post(':id/restore')
+  restore(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.orders.restore(admin.userId, id);
+  }
 }

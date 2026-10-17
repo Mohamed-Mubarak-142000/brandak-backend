@@ -614,11 +614,23 @@ describe('Brandak marketplace (e2e)', () => {
       await ctx.http().post(api(`/products/${product._id}/reviews`)).set(auth(customer.token)).send({ orderId, rating: 5 }).expect(403);
       // Customers can't cancel once the brand confirmed.
       await setStatus(orderId, 'CONFIRMED').expect(200);
+      // Admins can only delete finished orders.
+      const inProgress = await ctx.http().post(api(`/admin/orders/${orderId}/delete`)).set(auth(admin)).expect(409);
+      expect(inProgress.body.error.code).toBe('ORDER_IN_PROGRESS');
       await ctx.http().post(api(`/orders/me/${orderId}/cancel`)).set(auth(customer.token)).send({}).expect(409);
       await setStatus(orderId, 'PROCESSING').expect(200);
       await setStatus(orderId, 'SHIPPED').expect(200);
       const delivered = await setStatus(orderId, 'DELIVERED').expect(200);
       expect(delivered.body.data).toMatchObject({ status: 'DELIVERED', paymentStatus: 'PAID', allowedNextStatuses: [] });
+
+      // Soft delete hides the order from the customer, the store and the admin list; restore brings it back.
+      await ctx.http().post(api(`/admin/orders/${orderId}/delete`)).set(auth(admin)).expect(200);
+      await ctx.http().get(api(`/orders/me/${orderId}`)).set(auth(customer.token)).expect(404);
+      await ctx.http().get(api(`/brand/orders/${orderId}`)).set(auth(shop.owner.token)).expect(404);
+      const deletedOrders = await ctx.http().get(api('/admin/orders?deleted=true&limit=100')).set(auth(admin)).expect(200);
+      expect(deletedOrders.body.data.map((o: any) => o.id)).toContain(orderId);
+      await ctx.http().post(api(`/admin/orders/${orderId}/restore`)).set(auth(admin)).expect(200);
+      await ctx.http().get(api(`/orders/me/${orderId}`)).set(auth(customer.token)).expect(200);
       expect(delivered.body.data.history.map((h: any) => h.status)).toEqual(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED']);
 
       // The other brand can't see or touch this order.
@@ -747,6 +759,20 @@ describe('Brandak marketplace (e2e)', () => {
       expect(await codes()).not.toContain('GROWTH');
       await ctx.http().post(api(`/admin/plans/${growthPlanId}/restore`)).set(auth(admin)).expect(200);
       expect(await codes()).toContain('GROWTH');
+    });
+
+    it('deletes only decided payments', async () => {
+      const { owner, brandId } = await onboardBrand('Paid Store');
+      const paid = await ctx.http().get(api(`/admin/payments?brandId=${brandId}&limit=10`)).set(auth(admin)).expect(200);
+      const approvedId = paid.body.data[0]._id;
+      await ctx.http().post(api(`/admin/payments/${approvedId}/delete`)).set(auth(admin)).expect(200);
+      const after = await ctx.http().get(api(`/admin/payments?brandId=${brandId}&limit=10`)).set(auth(admin)).expect(200);
+      expect(after.body.data.map((p: any) => p._id)).not.toContain(approvedId);
+      await ctx.http().post(api(`/admin/payments/${approvedId}/restore`)).set(auth(admin)).expect(200);
+
+      const renewal = await ctx.http().post(api('/brand/subscriptions')).set(auth(owner.token)).send({ planId: growthPlanId, billingPeriod: 'MONTHLY' }).expect(201);
+      const pending = await ctx.http().post(api(`/admin/payments/${renewal.body.data.payment.id}/delete`)).set(auth(admin)).expect(409);
+      expect(pending.body.error.code).toBe('PAYMENT_IN_PROGRESS');
     });
 
     it('deletes a report only once it is handled', async () => {

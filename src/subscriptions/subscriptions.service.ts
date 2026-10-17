@@ -92,6 +92,34 @@ export class SubscriptionsService {
     throw AppError.conflict('INVALID_STATE', deleting ? 'Plan is already deleted' : 'Plan is not deleted');
   }
 
+  /** Decided payments only; a reference stays reserved after delete (anti-reuse checks see it). */
+  async deletePayment(adminId: string, id: string) {
+    const done = [PaymentStatus.APPROVED, PaymentStatus.REJECTED, PaymentStatus.CANCELLED];
+    const payment = await this.payments.findOneAndUpdate(
+      { _id: id, deletedAt: null, status: { $in: done } },
+      { $set: { deletedAt: new Date(), deletedBy: new Types.ObjectId(adminId) } },
+      { new: true },
+    );
+    if (!payment) {
+      const p = await this.payments.findById(id).select('status').lean();
+      if (!p) throw AppError.notFound('Payment');
+      if (!done.includes(p.status)) throw AppError.conflict('PAYMENT_IN_PROGRESS', 'Review the payment before deleting it');
+      throw AppError.conflict('INVALID_STATE', 'Payment is already deleted');
+    }
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'PAYMENT_DELETED', entityType: 'Payment', entityId: payment._id });
+    return payment;
+  }
+
+  async restorePayment(adminId: string, id: string) {
+    const payment = await this.payments.findOneAndUpdate({ _id: id, deletedAt: { $ne: null } }, { $unset: { deletedAt: 1, deletedBy: 1 } }, { new: true });
+    if (!payment) {
+      if (!(await this.payments.exists({ _id: id }))) throw AppError.notFound('Payment');
+      throw AppError.conflict('INVALID_STATE', 'Payment is not deleted');
+    }
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'PAYMENT_RESTORED', entityType: 'Payment', entityId: payment._id });
+    return payment;
+  }
+
   // ---------- Brand owner ----------
 
   /** The subscription in force right now (used for plan limits). */
@@ -243,7 +271,7 @@ export class SubscriptionsService {
       this.brands.findById(id).select('subscriptionEndsAt').lean(),
       this.currentFor(id),
       this.subscriptions.find({ brandId: id }).sort({ createdAt: -1 }).limit(24).lean(),
-      this.payments.find({ brandId: id }).sort({ createdAt: -1 }).limit(24).lean(),
+      this.payments.find({ brandId: id, deletedAt: null }).sort({ createdAt: -1 }).limit(24).lean(),
     ]);
     const paymentBySub = new Map(payments.map((p) => [p.subscriptionId.toString(), this.paymentView(p)]));
     const withPayment = (s: (typeof history)[number]) => ({ ...s, payment: paymentBySub.get(s._id.toString()) ?? null });
@@ -265,7 +293,7 @@ export class SubscriptionsService {
   // ---------- Admin review ----------
 
   listPayments(query: AdminPaymentsQueryDto) {
-    const filter: FilterQuery<Payment> = {};
+    const filter: FilterQuery<Payment> = { deletedAt: query.deleted ? { $ne: null } : null };
     if (query.status) filter.status = query.status;
     if (query.brandId) filter.brandId = new Types.ObjectId(query.brandId);
     return paginate(this.payments, filter, query, {

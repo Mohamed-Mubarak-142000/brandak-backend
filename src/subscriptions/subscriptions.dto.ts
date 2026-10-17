@@ -1,5 +1,5 @@
 import { PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -74,6 +74,12 @@ export class AdminPaymentsQueryDto extends PageQueryDto {
   @IsOptional()
   @IsMongoId()
   brandId?: string;
+
+  /** true = only soft-deleted payments. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  deleted?: boolean;
 }
 
 export class AdminSubscriptionsQueryDto extends PageQueryDto {
@@ -84,6 +90,12 @@ export class AdminSubscriptionsQueryDto extends PageQueryDto {
   @IsOptional()
   @IsMongoId()
   brandId?: string;
+
+  /** true = only soft-deleted payments. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  deleted?: boolean;
 }
 
 class PlanLimitsDto {

@@ -1,4 +1,6 @@
+import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
@@ -81,4 +83,10 @@ export class AdminOrdersQueryDto extends BrandOrdersQueryDto {
   @IsOptional()
   @IsMongoId()
   brandId?: string;
+
+  /** true = only soft-deleted orders. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  deleted?: boolean;
 }

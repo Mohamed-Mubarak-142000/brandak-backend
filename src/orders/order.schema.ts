@@ -82,6 +82,13 @@ export class Order {
   @Prop()
   deliveredAt?: Date;
 
+  /** Soft delete: hidden from every list and stat; restore unsets it. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
+
   createdAt: Date;
   updatedAt: Date;
 }

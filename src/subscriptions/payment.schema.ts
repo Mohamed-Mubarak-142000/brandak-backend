@@ -68,6 +68,13 @@ export class Payment {
   @Prop({ type: [ProofAttemptSchema], default: [] })
   previousAttempts: ProofAttempt[];
 
+  /** Soft delete: hidden from every list and stat; restore unsets it. */
+  @Prop()
+  deletedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  deletedBy?: Types.ObjectId;
+
   createdAt: Date;
 }
 

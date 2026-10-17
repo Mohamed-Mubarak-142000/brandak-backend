@@ -78,6 +78,18 @@ export class AdminSubscriptionsController {
     return this.subscriptions.getPayment(id);
   }
 
+  @HttpCode(200)
+  @Post('payments/:id/delete')
+  deletePayment(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.subscriptions.deletePayment(admin.userId, id);
+  }
+
+  @HttpCode(200)
+  @Post('payments/:id/restore')
+  restorePayment(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.subscriptions.restorePayment(admin.userId, id);
+  }
+
   @Get('payments/:id/proof-url')
   proofUrl(@CurrentUser() admin: AuthUser, @Param('id', ParseObjectIdPipe) id: string) {
     return this.subscriptions.proofUrl(admin.userId, id);

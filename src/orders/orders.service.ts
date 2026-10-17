@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, Types } from 'mongoose';
 import { OrderStatus } from '@/common/enums';
+
+/** Only finished orders can be deleted, so stock and the order flow are never left half-way. */
+const DELETABLE: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED];
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
 import { escapeRegex, normalizeEgyptPhone } from '@/common/utils/text';
@@ -37,20 +40,20 @@ export class OrdersService {
   // ---------- Customer ----------
 
   async listMine(userId: string, query: OrdersQueryDto) {
-    const filter: FilterQuery<Order> = { userId: new Types.ObjectId(userId) };
+    const filter: FilterQuery<Order> = { userId: new Types.ObjectId(userId), deletedAt: null };
     if (query.status) filter.status = query.status;
     return this.page(filter, query, 'CUSTOMER');
   }
 
   async getMine(userId: string, id: string) {
-    const order = await this.orders.findOne({ _id: id, userId: new Types.ObjectId(userId) }).lean();
+    const order = await this.orders.findOne({ _id: id, userId: new Types.ObjectId(userId), deletedAt: null }).lean();
     if (!order) throw AppError.notFound('Order');
     return this.toView(order, 'CUSTOMER');
   }
 
   cancelByCustomer(userId: string, id: string, reason?: string) {
     return this.changeStatus(
-      { _id: id, userId: new Types.ObjectId(userId) },
+      { _id: id, userId: new Types.ObjectId(userId), deletedAt: null },
       OrderStatus.CANCELLED,
       { actor: 'CUSTOMER', userId, note: reason || 'ألغاه العميل' },
     );
@@ -59,11 +62,11 @@ export class OrdersService {
   // ---------- Brand ----------
 
   listForBrand(brandId: string, query: BrandOrdersQueryDto) {
-    return this.page(this.searchFilter({ brandId: new Types.ObjectId(brandId) }, query), query, 'BRAND');
+    return this.page(this.searchFilter({ brandId: new Types.ObjectId(brandId), deletedAt: null }, query), query, 'BRAND');
   }
 
   async getForBrand(brandId: string, id: string) {
-    const order = await this.orders.findOne({ _id: id, brandId: new Types.ObjectId(brandId) }).lean();
+    const order = await this.orders.findOne({ _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null }).lean();
     if (!order) throw AppError.notFound('Order');
     return this.toView(order, 'BRAND');
   }
@@ -74,12 +77,12 @@ export class OrdersService {
         { field: 'note', reason: 'required' },
       ]);
     }
-    return this.changeStatus({ _id: id, brandId: new Types.ObjectId(brandId) }, status, { actor: 'BRAND', userId, note });
+    return this.changeStatus({ _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null }, status, { actor: 'BRAND', userId, note });
   }
 
   /** Customers who ordered from this brand, with totals. Only data from this brand's own orders. */
   async brandCustomers(brandId: string, query: { page: number; limit: number }) {
-    const match = { brandId: new Types.ObjectId(brandId) };
+    const match = { brandId: new Types.ObjectId(brandId), deletedAt: null };
     const [rows, total] = await Promise.all([
       this.orders.aggregate([
         { $match: match },
@@ -108,7 +111,8 @@ export class OrdersService {
   // ---------- Admin ----------
 
   listAll(query: AdminOrdersQueryDto) {
-    const base: FilterQuery<Order> = query.brandId ? { brandId: new Types.ObjectId(query.brandId) } : {};
+    const base: FilterQuery<Order> = { deletedAt: query.deleted ? { $ne: null } : null };
+    if (query.brandId) base.brandId = new Types.ObjectId(query.brandId);
     return this.page(this.searchFilter(base, query), query, 'ADMIN');
   }
 
@@ -119,7 +123,33 @@ export class OrdersService {
   }
 
   cancelByAdmin(adminId: string, id: string, reason: string) {
-    return this.changeStatus({ _id: id }, OrderStatus.CANCELLED, { actor: 'ADMIN', userId: adminId, note: reason });
+    return this.changeStatus({ _id: id, deletedAt: null }, OrderStatus.CANCELLED, { actor: 'ADMIN', userId: adminId, note: reason });
+  }
+
+  async softDelete(adminId: string, id: string) {
+    const order = await this.orders.findOneAndUpdate(
+      { _id: id, deletedAt: null, status: { $in: DELETABLE } },
+      { $set: { deletedAt: new Date(), deletedBy: new Types.ObjectId(adminId) } },
+      { new: true },
+    );
+    if (!order) {
+      const o = await this.orders.findById(id).select('status deletedAt').lean();
+      if (!o) throw AppError.notFound('Order');
+      if (!DELETABLE.includes(o.status)) throw AppError.conflict('ORDER_IN_PROGRESS', 'Only delivered or cancelled orders can be deleted');
+      throw AppError.conflict('INVALID_STATE', 'Order is already deleted');
+    }
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'ORDER_DELETED', entityType: 'Order', entityId: order._id });
+    return this.toView(order.toObject(), 'ADMIN');
+  }
+
+  async restore(adminId: string, id: string) {
+    const order = await this.orders.findOneAndUpdate({ _id: id, deletedAt: { $ne: null } }, { $unset: { deletedAt: 1, deletedBy: 1 } }, { new: true });
+    if (!order) {
+      if (!(await this.orders.exists({ _id: id }))) throw AppError.notFound('Order');
+      throw AppError.conflict('INVALID_STATE', 'Order is not deleted');
+    }
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'ORDER_RESTORED', entityType: 'Order', entityId: order._id });
+    return this.toView(order.toObject(), 'ADMIN');
   }
 
   // ---------- Core ----------

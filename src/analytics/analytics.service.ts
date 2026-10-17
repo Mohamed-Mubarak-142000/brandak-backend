@@ -50,7 +50,7 @@ export class AnalyticsService {
 
   async brandOverview(brandId: string, range: ReturnType<typeof resolveRange>) {
     const id = new Types.ObjectId(brandId);
-    const inRange = (r: Range) => ({ brandId: id, createdAt: { $gte: r.from, $lt: r.to } });
+    const inRange = (r: Range) => ({ brandId: id, deletedAt: null, createdAt: { $gte: r.from, $lt: r.to } });
 
     const [byStatus, previous, pending, daily, topProducts, lowStock, subscription, activeProducts] = await Promise.all([
       this.orders.aggregate<{ _id: OrderStatus; count: number; total: number }>([
@@ -61,7 +61,7 @@ export class AnalyticsService {
         { $match: { ...inRange(range.previous), status: NOT_CANCELLED } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: '$grandTotal' } } },
       ]),
-      this.orders.countDocuments({ brandId: id, status: OrderStatus.PENDING }),
+      this.orders.countDocuments({ brandId: id, status: OrderStatus.PENDING, deletedAt: null }),
       this.orders.aggregate<{ _id: string; orders: number; sales: number }>([
         { $match: { ...inRange(range), status: NOT_CANCELLED } },
         {
@@ -163,11 +163,11 @@ export class AnalyticsService {
         .select('planSnapshot')
         .lean(),
       this.payments.aggregate<{ total: number; count: number }>([
-        { $match: { status: PaymentStatus.APPROVED, reviewedAt: { $gte: range.from, $lt: range.to } } },
+        { $match: { status: PaymentStatus.APPROVED, deletedAt: null, reviewedAt: { $gte: range.from, $lt: range.to } } },
         { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
       ]),
       this.payments.aggregate<{ count: number }>([
-        { $match: { status: PaymentStatus.APPROVED, reviewedAt: { $gte: range.from, $lt: range.to } } },
+        { $match: { status: PaymentStatus.APPROVED, deletedAt: null, reviewedAt: { $gte: range.from, $lt: range.to } } },
         { $lookup: { from: 'subscriptions', localField: 'subscriptionId', foreignField: '_id', as: 'sub' } },
         { $match: { 'sub.renewalOf': { $exists: true, $ne: null } } },
         { $count: 'count' },
@@ -175,7 +175,7 @@ export class AnalyticsService {
       this.payments.countDocuments({ status: PaymentStatus.PENDING_REVIEW }),
       this.reports.countDocuments({ status: ReportStatus.OPEN }),
       this.orders.aggregate<{ count: number; gmv: number }>([
-        { $match: { createdAt: { $gte: range.from, $lt: range.to }, status: NOT_CANCELLED } },
+        { $match: { createdAt: { $gte: range.from, $lt: range.to }, status: NOT_CANCELLED, deletedAt: null } },
         { $group: { _id: null, count: { $sum: 1 }, gmv: { $sum: '$grandTotal' } } },
       ]),
       this.brandModel.countDocuments({
