@@ -36,7 +36,7 @@ export class OtpService {
       codeHash: this.hash(userId, purpose, code),
       expiresAt: new Date(Date.now() + CODE_TTL_MS),
     });
-    await this.channel.send(channel, target, `Brandak code: ${code}`);
+    await this.channel.send(channel, target, `Brandak code: ${code}`, { code, purpose });
   }
 
   /** Consumes the latest valid code. Throws on a wrong, expired or exhausted code. */

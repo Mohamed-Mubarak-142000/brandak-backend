@@ -11,7 +11,7 @@ import { User, UserSchema } from '@/users/user.schema';
 import { UsersModule } from '@/users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { CONTACT_CHANNEL, LogContactChannel } from './contact-channel';
+import { CONTACT_CHANNEL, MailContactChannel } from './contact-channel';
 import { Otp, OtpSchema } from './otp.schema';
 import { OtpService } from './otp.service';
 import { Session, SessionSchema } from './session.schema';
@@ -39,7 +39,7 @@ import { SessionsService } from './sessions.service';
     AuthService,
     SessionsService,
     OtpService,
-    { provide: CONTACT_CHANNEL, useClass: LogContactChannel },
+    { provide: CONTACT_CHANNEL, useClass: MailContactChannel },
     // Order matters: throttle first, then authenticate, then check roles.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

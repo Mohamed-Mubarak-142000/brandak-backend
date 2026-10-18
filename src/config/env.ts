@@ -14,6 +14,12 @@ const envSchema = z.object({
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
   PUBLIC_BASE_URL: z.string().default('http://localhost:3000'),
+  /** SMTP for verification and password-reset emails. Unset = codes only go to the log. */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(465),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
   INSTAPAY_RECEIVER: z.string().min(1),
   INSTAPAY_RECEIVER_NAME: z.string().default('Brandak'),
   /** Shared secret Vercel Cron sends to /internal/cron/* endpoints. */
