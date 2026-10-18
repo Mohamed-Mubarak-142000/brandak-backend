@@ -1,3 +1,4 @@
+import { cairoMonthStart } from '@/common/utils/month';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -52,6 +53,8 @@ export class AnalyticsService {
     const id = new Types.ObjectId(brandId);
     const inRange = (r: Range) => ({ brandId: id, deletedAt: null, createdAt: { $gte: r.from, $lt: r.to } });
 
+    // Same rule as the checkout limit: this calendar month in Cairo, cancelled orders don't count.
+    const ordersThisMonth = await this.orders.countDocuments({ brandId: id, createdAt: { $gte: cairoMonthStart() }, status: { $ne: OrderStatus.CANCELLED } });
     const [byStatus, previous, pending, daily, topProducts, lowStock, subscription, activeProducts] = await Promise.all([
       this.orders.aggregate<{ _id: OrderStatus; count: number; total: number }>([
         { $match: inRange(range) },
@@ -131,6 +134,10 @@ export class AnalyticsService {
             endsAt: subscription.endsAt,
             activeProducts,
             maxActiveProducts: subscription.planSnapshot.limits.maxActiveProducts,
+            isFree: subscription.planSnapshot.price === 0,
+            maxOrdersPerMonth: subscription.planSnapshot.limits.maxOrdersPerMonth ?? null,
+            maxImagesPerProduct: subscription.planSnapshot.limits.maxImagesPerProduct ?? 10,
+            ordersThisMonth,
           }
         : null,
     };

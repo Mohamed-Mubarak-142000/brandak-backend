@@ -3,14 +3,25 @@ import { StoreType } from '@/common/enums';
 /** Draft pricing from the business analysis — editable later from the admin dashboard. */
 export const PLANS = [
   {
+    code: 'FREE',
+    nameAr: 'مجانية',
+    nameEn: 'Free',
+    descriptionAr: 'ابدأ من غير ما تدفع حاجة، وطوّر لما الطلبات تزيد.',
+    priceMonthly: 0,
+    priceYearly: 0,
+    limits: { maxActiveProducts: 10, maxOrdersPerMonth: 30, maxImagesPerProduct: 3 },
+    features: ['حتى 10 منتجات منشورة', 'حتى 30 طلب في الشهر', '3 صور لكل منتج', 'صفحة متجر وإدارة الطلبات'],
+    sortOrder: 0,
+  },
+  {
     code: 'STARTER',
     nameAr: 'البداية',
     nameEn: 'Starter',
     descriptionAr: 'مناسبة للبراند الجديد اللي بيجرب البيع أونلاين.',
     priceMonthly: 99,
     priceYearly: 990,
-    limits: { maxActiveProducts: 30 },
-    features: ['حتى 30 منتجًا منشورًا', 'إدارة الطلبات وحالاتها', 'صفحة براند وبيانات تواصل', 'إعدادات الشحن الأساسية', 'إحصائيات أساسية'],
+    limits: { maxActiveProducts: 30, maxOrdersPerMonth: 300, maxImagesPerProduct: 6 },
+    features: ['حتى 30 منتجًا منشورًا', 'حتى 300 طلب في الشهر', '6 صور لكل منتج', 'إدارة الطلبات وحالاتها', 'صفحة براند وبيانات تواصل', 'إعدادات الشحن الأساسية', 'إحصائيات أساسية'],
     sortOrder: 1,
   },
   {
@@ -20,8 +31,8 @@ export const PLANS = [
     descriptionAr: 'للبراند اللي بدأ يستقبل طلبات بشكل مستمر.',
     priceMonthly: 199,
     priceYearly: 1990,
-    limits: { maxActiveProducts: 200 },
-    features: ['حتى 200 منتج منشور', 'كل مزايا البداية', 'المقاسات والألوان والمخزون', 'تقارير مبيعات أكثر تفصيلًا'],
+    limits: { maxActiveProducts: 200, maxOrdersPerMonth: 2000, maxImagesPerProduct: 10 },
+    features: ['حتى 200 منتج منشور', 'حتى 2000 طلب في الشهر', '10 صور لكل منتج', 'كل مزايا البداية', 'المقاسات والألوان والمخزون', 'تقارير مبيعات أكثر تفصيلًا'],
     sortOrder: 2,
   },
   {
@@ -31,8 +42,8 @@ export const PLANS = [
     descriptionAr: 'للبراند اللي عنده كتالوج كبير واحتياجات متقدمة.',
     priceMonthly: 349,
     priceYearly: 3490,
-    limits: { maxActiveProducts: 1000 },
-    features: ['حتى 1000 منتج منشور', 'كل مزايا النمو', 'دعم فني بأولوية أعلى'],
+    limits: { maxActiveProducts: 1000, maxOrdersPerMonth: null, maxImagesPerProduct: 10 },
+    features: ['حتى 1000 منتج منشور', 'طلبات بلا حد', 'كل مزايا النمو', 'دعم فني بأولوية أعلى'],
     sortOrder: 3,
   },
 ];

@@ -1,12 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { BrandStatus, SubscriptionStatus } from '@/common/enums';
+import { Model, Types } from 'mongoose';
+import { BrandStatus, ProductStatus, SubscriptionStatus } from '@/common/enums';
+import { Product } from '@/products/product.schema';
 import { Brand } from '@/brands/brand.schema';
 import { BrandMembersService } from '@/brands/brand-members.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Subscription } from './subscription.schema';
+import { SubscriptionsService } from './subscriptions.service';
 
 const DAY_MS = 86_400_000;
 
@@ -19,6 +21,8 @@ export class SubscriptionJobs {
     @InjectModel(Brand.name) private readonly brands: Model<Brand>,
     private readonly members: BrandMembersService,
     private readonly notifications: NotificationsService,
+    @InjectModel(Product.name) private readonly products: Model<Product>,
+    private readonly subs: SubscriptionsService,
   ) {}
 
   /** Hourly so expiry is reflected quickly; notifications are de-duplicated per period end. */
@@ -30,11 +34,49 @@ export class SubscriptionJobs {
   }
 
   async expireEnded(now: Date) {
+    const ending = await this.subscriptions
+      .find({ status: SubscriptionStatus.ACTIVE, endsAt: { $lte: now } })
+      .select('brandId planSnapshot.price')
+      .lean();
+    if (!ending.length) return 0;
     const res = await this.subscriptions.updateMany(
-      { status: SubscriptionStatus.ACTIVE, endsAt: { $lte: now } },
+      { _id: { $in: ending.map((s) => s._id) } },
       { $set: { status: SubscriptionStatus.EXPIRED } },
     );
+    await this.fallBackToFree([...new Set(ending.filter((s) => s.planSnapshot.price > 0).map((s) => s.brandId.toString()))]);
     return res.modifiedCount;
+  }
+
+  /**
+   * A store whose paid plan ended (and wasn't renewed) moves to the free plan instead of
+   * disappearing. Published products beyond the free limit go back to drafts, newest kept.
+   */
+  async fallBackToFree(brandIds: string[]) {
+    const free = await this.subs.freePlan();
+    if (!free) return;
+    for (const id of brandIds) {
+      if (await this.subs.currentFor(id)) continue; // renewed or another plan already active
+      const brandId = new Types.ObjectId(id);
+      await this.subs.activateFree(null, brandId, free);
+      const keep = free.limits.maxActiveProducts;
+      const extra = await this.products
+        .find({ brandId, status: ProductStatus.ACTIVE })
+        .sort({ publishedAt: -1, updatedAt: -1 })
+        .skip(keep)
+        .select('_id')
+        .lean();
+      if (extra.length) {
+        await this.products.updateMany({ _id: { $in: extra.map((p) => p._id) } }, { $set: { status: ProductStatus.DRAFT } });
+      }
+      await this.notifications.notify(await this.members.memberUserIds(brandId), {
+        type: 'SUBSCRIPTION_FREE_FALLBACK',
+        title: 'رجعت للباقة المجانية',
+        body: extra.length
+          ? `انتهت باقتك ومتجرك لسه ظاهر على الباقة المجانية. ${extra.length} منتج رجع مسودة عشان حد الباقة ${keep} منتج. جدّد عشان ترجعهم.`
+          : 'انتهت باقتك ومتجرك لسه ظاهر على الباقة المجانية بحدودها. جدّد في أي وقت عشان ترجع لمزايا باقتك.',
+        data: { brandId: id },
+      });
+    }
   }
 
   /** Reminders 7 and 3 days before the paid period ends, on the last day, and once it has ended. */

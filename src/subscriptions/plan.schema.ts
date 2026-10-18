@@ -5,6 +5,13 @@ import { HydratedDocument, Types } from 'mongoose';
 export class PlanLimits {
   @Prop({ required: true, min: 1 })
   maxActiveProducts: number;
+
+  /** Orders a store can receive per calendar month (Cairo time); null = unlimited. */
+  @Prop({ type: Number, default: null })
+  maxOrdersPerMonth: number | null;
+
+  @Prop({ default: 10, min: 1, max: 10 })
+  maxImagesPerProduct: number;
 }
 const PlanLimitsSchema = SchemaFactory.createForClass(PlanLimits);
 

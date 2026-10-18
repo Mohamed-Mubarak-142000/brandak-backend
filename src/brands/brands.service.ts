@@ -4,6 +4,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, SortOrder, Types } from 'mongoose';
 import { BrandStatus, FilePurpose, StoreType } from '@/common/enums';
 import { AppError } from '@/common/errors';
+import { IMAGE_WIDTH, optimizedImage } from '@/common/utils/image';
 import { paginate, PageResult } from '@/common/pagination';
 import { escapeRegex, normalizeEgyptPhone, normalizeSearchText, slugify } from '@/common/utils/text';
 import { withTransaction } from '@/common/utils/transaction';
@@ -361,8 +362,8 @@ export class BrandsService {
       // .lean() reads skip schema defaults; stores older than storeType are brands.
       storeType: brand.storeType ?? StoreType.BRAND,
       description: brand.description,
-      logoUrl: brand.logo?.url ?? null,
-      coverUrl: brand.cover?.url ?? null,
+      logoUrl: optimizedImage(brand.logo?.url, IMAGE_WIDTH.logo),
+      coverUrl: optimizedImage(brand.cover?.url, IMAGE_WIDTH.cover),
       categoryIds: (brand.categoryIds ?? []).map(String),
       contact: brand.contact ?? {},
       socialLinks: brand.socialLinks ?? {},

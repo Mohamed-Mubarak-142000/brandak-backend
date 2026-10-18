@@ -3,6 +3,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { OrderPaymentMethod, OrderStatus, ProductStatus } from '@/common/enums';
 import { AppError, ErrorDetail } from '@/common/errors';
+import { cairoMonthStart } from '@/common/utils/month';
 import { withTransaction } from '@/common/utils/transaction';
 import { AddressesService, toView as addressView } from '@/addresses/addresses.service';
 import { BrandDocument } from '@/brands/brand.schema';
@@ -11,6 +12,7 @@ import { BrandsService } from '@/brands/brands.service';
 import { CartsService } from '@/carts/carts.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Product } from '@/products/product.schema';
+import { SubscriptionsService } from '@/subscriptions/subscriptions.service';
 import { UsersService } from '@/users/users.service';
 import { Counter, Order } from './order.schema';
 import { PlaceOrderDto, QuoteDto } from './orders.dto';
@@ -31,6 +33,7 @@ export class CheckoutService {
     private readonly users: UsersService,
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
+    private readonly subscriptions: SubscriptionsService,
   ) {}
 
   /** Read-only preview with the same rules as placing the order. */
@@ -58,6 +61,7 @@ export class CheckoutService {
     if (existing) return this.ordersService.toView(existing);
 
     const brand = await this.orderableBrand(brandId);
+    const usage = await this.orderUsage(brand._id);
     const [user, address, cart] = await Promise.all([
       this.users.getById(userId),
       this.addresses.getOwned(userId, dto.addressId),
@@ -154,12 +158,28 @@ export class CheckoutService {
       throw e;
     }
 
-    await this.notifications.notify(await this.members.memberUserIds(brand._id), {
+    const sellers = await this.members.memberUserIds(brand._id);
+    await this.notifications.notify(sellers, {
       type: 'ORDER_PLACED',
       title: 'طلب جديد',
       body: `طلب ${order.orderNumber} بقيمة ${order.grandTotal} ج.م`,
       data: { orderId: order.id },
     });
+    // Warn the store once at 80% of its monthly orders and once when it hits the limit.
+    if (usage.limit) {
+      const used = usage.used + 1;
+      if (used === usage.limit || used === Math.ceil(usage.limit * 0.8)) {
+        const full = used === usage.limit;
+        await this.notifications.notify(sellers, {
+          type: 'ORDER_LIMIT',
+          title: full ? 'وصلت لحد طلبات الشهر' : 'قربت من حد طلبات الشهر',
+          body: full
+            ? `استقبلت ${used} طلب الشهر ده، وده حد باقتك. متجرك مش هيستقبل طلبات جديدة لحد أول الشهر الجاي أو لحد ما تطوّر باقتك.`
+            : `استقبلت ${used} من ${usage.limit} طلب مسموحين في باقتك الشهر ده. طوّر باقتك عشان متوقفش.`,
+          data: { used: String(used), limit: String(usage.limit) },
+        });
+      }
+    }
     return this.ordersService.toView(order.toObject());
   }
 
@@ -169,10 +189,28 @@ export class CheckoutService {
     if (!brand.settings.acceptsOrders) {
       throw AppError.unprocessable('BRAND_NOT_ACCEPTING_ORDERS', 'This brand is not accepting orders right now');
     }
+    const { used, limit } = await this.orderUsage(brand._id);
+    if (limit != null && used >= limit) {
+      throw AppError.unprocessable('STORE_ORDER_LIMIT', 'This store reached its monthly order limit');
+    }
     return brand;
+  }
+
+  /** Orders this calendar month (Cairo time) that count against the plan; cancelled ones don't. */
+  async orderUsage(brandId: Types.ObjectId) {
+    const current = await this.subscriptions.currentFor(brandId);
+    const limit = current?.planSnapshot.limits.maxOrdersPerMonth ?? null;
+    if (limit == null) return { used: 0, limit: null };
+    const used = await this.orders.countDocuments({
+      brandId,
+      createdAt: { $gte: cairoMonthStart() },
+      status: { $ne: OrderStatus.CANCELLED },
+    });
+    return { used, limit };
   }
 
   private cartIssues(details: ErrorDetail[]) {
     return new AppError('CART_HAS_ISSUES', 'Some items are unavailable or out of stock', HttpStatus.CONFLICT, details);
   }
 }
+

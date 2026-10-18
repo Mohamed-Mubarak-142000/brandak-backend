@@ -20,7 +20,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { BrandStatus, StoreType } from '@/common/enums';
+import { BillingPeriod, BrandStatus, StoreType } from '@/common/enums';
 import { GOVERNORATE_CODES } from '@/common/governorates';
 import { PageQueryDto } from '@/common/pagination';
 
@@ -47,6 +47,14 @@ export class SocialLinksDto {
 }
 
 export class CreateBrandApplicationDto {
+  /** The plan chosen while opening the store; a store can't be created without one. */
+  @IsMongoId()
+  planId: string;
+
+  @IsOptional()
+  @IsEnum(BillingPeriod)
+  billingPeriod?: BillingPeriod;
+
   /** Kind of business: brand, showroom, warehouse or shop. */
   @IsEnum(StoreType)
   storeType: StoreType;
@@ -141,7 +149,7 @@ export class BrandSettingsDto {
   acceptsOrders?: boolean;
 }
 
-export class UpdateBrandDto extends PartialType(OmitType(CreateBrandApplicationDto, ['contact'] as const)) {
+export class UpdateBrandDto extends PartialType(OmitType(CreateBrandApplicationDto, ['contact', 'planId', 'billingPeriod'] as const)) {
   @IsOptional()
   @ValidateNested()
   @Type(() => BrandContactDto)

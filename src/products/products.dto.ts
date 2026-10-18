@@ -73,6 +73,14 @@ export class CreateProductDto {
   @IsMongoId({ each: true })
   imageFileIds: string[];
 
+  /** Same order as imageFileIds: the colour each photo shows ("" = every colour). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(30, { each: true })
+  imageColors?: string[];
+
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(100)

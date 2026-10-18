@@ -1,9 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, Types } from 'mongoose';
-import { BrandStatus, FilePurpose, PaymentStatus, SubscriptionStatus } from '@/common/enums';
+import { BillingPeriod, BrandStatus, FilePurpose, PaymentStatus, SubscriptionStatus } from '@/common/enums';
 import { AppError } from '@/common/errors';
-import { paginate } from '@/common/pagination';
+import { Lean, paginate } from '@/common/pagination';
 import { normalizeReference } from '@/common/utils/text';
 import { withTransaction } from '@/common/utils/transaction';
 import { AuditLogsService } from '@/audit-logs/audit-logs.service';
@@ -16,7 +16,7 @@ import { SUBSCRIPTION_PAYMENT_PROVIDER, SubscriptionPaymentProvider } from './pa
 import { Payment } from './payment.schema';
 import { SubscriptionPlan } from './plan.schema';
 import { Subscription } from './subscription.schema';
-import { computePeriod, DURATION_DAYS } from './subscription-period';
+import { computePeriod, DURATION_DAYS, FREE_DURATION_DAYS, planLimits } from './subscription-period';
 import {
   AdminPaymentsQueryDto,
   AdminSubscriptionsQueryDto,
@@ -123,6 +123,63 @@ export class SubscriptionsService {
   // ---------- Brand owner ----------
 
   /** The subscription in force right now (used for plan limits). */
+  async requirePlan(planId: string) {
+    if (!Types.ObjectId.isValid(planId) || !(await this.plans.exists({ _id: planId, isActive: true }))) {
+      throw AppError.unprocessable('PLAN_REQUIRED', 'Choose an active plan for the store');
+    }
+  }
+
+  /** The free plan, if the admin has one active (price 0). */
+  freePlan() {
+    return this.plans.findOne({ isActive: true, deletedAt: null, priceMonthly: 0 }).sort({ sortOrder: 1 }).lean();
+  }
+
+  /**
+   * Free plans need no payment: the subscription is active at once and runs for years. A store
+   * on a paid plan stays on it; when that ends it falls back to free on its own (SubscriptionJobs).
+   */
+  async activateFree(userId: string | null, brandId: Types.ObjectId, plan: Lean<SubscriptionPlan>) {
+    const current = await this.currentFor(brandId);
+    if (current && current.planSnapshot.price > 0) {
+      throw AppError.conflict('ALREADY_ON_PAID_PLAN', 'Your paid plan is active; you move to the free plan when it ends');
+    }
+    if (current) return { subscription: current, payment: null, instructions: null };
+    if (await this.payments.exists({ brandId, status: PaymentStatus.PENDING_REVIEW })) {
+      throw AppError.conflict('PAYMENT_UNDER_REVIEW', 'A payment is already under review');
+    }
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + FREE_DURATION_DAYS * 86_400_000);
+    const subscription = await withTransaction(this.connection, async (session) => {
+      // A free plan replaces any unpaid request.
+      await this.subscriptions.updateMany(
+        { brandId, status: SubscriptionStatus.PENDING_PAYMENT },
+        { $set: { status: SubscriptionStatus.CANCELLED, cancelledAt: now } },
+        { session },
+      );
+      const [sub] = await this.subscriptions.create(
+        [
+          {
+            brandId,
+            planId: plan._id,
+            planSnapshot: { code: plan.code, nameAr: plan.nameAr, nameEn: plan.nameEn, price: 0, durationDays: FREE_DURATION_DAYS, limits: planLimits(plan) },
+            billingPeriod: BillingPeriod.MONTHLY,
+            status: SubscriptionStatus.ACTIVE,
+            startsAt: now,
+            endsAt,
+          },
+        ],
+        { session },
+      );
+      await this.brands.updateOne({ _id: brandId }, { $set: { subscriptionEndsAt: endsAt } }, { session });
+      await this.audit.log(
+        { actorId: userId ?? undefined, actorType: userId ? 'USER' : 'SYSTEM', action: 'SUBSCRIPTION_FREE_ACTIVATED', entityType: 'Subscription', entityId: sub._id, data: { plan: plan.code } },
+        session,
+      );
+      return sub;
+    });
+    return { subscription: subscription.toObject(), payment: null, instructions: null };
+  }
+
   currentFor(brandId: string | Types.ObjectId) {
     const now = new Date();
     return this.subscriptions
@@ -144,8 +201,9 @@ export class SubscriptionsService {
     const plan = await this.plans.findOne({ _id: dto.planId, isActive: true }).lean();
     if (!plan) throw AppError.notFound('Plan');
 
-    const durationDays = DURATION_DAYS[dto.billingPeriod];
     const price = dto.billingPeriod === 'YEARLY' ? plan.priceYearly : plan.priceMonthly;
+    if (price === 0) return this.activateFree(userId, brand._id, plan);
+    const durationDays = DURATION_DAYS[dto.billingPeriod];
 
     const result = await withTransaction(this.connection, async (session) => {
       // Only one open request at a time. An unreviewed one is replaced; one under review blocks.
@@ -182,7 +240,7 @@ export class SubscriptionsService {
               nameEn: plan.nameEn,
               price,
               durationDays,
-              limits: { maxActiveProducts: plan.limits.maxActiveProducts },
+              limits: planLimits(plan),
             },
             billingPeriod: dto.billingPeriod,
             renewalOf: previous?._id,
@@ -343,9 +401,19 @@ export class SubscriptionsService {
       const brand = await this.brands.findById(payment.brandId).session(session);
       if (!brand) throw AppError.notFound('Brand');
 
+      // Moving up from the free plan ends it now; the paid period doesn't queue behind it.
+      const free = await this.subscriptions
+        .findOne({ brandId: brand._id, status: SubscriptionStatus.ACTIVE, 'planSnapshot.price': 0 })
+        .session(session);
+      if (free) {
+        free.status = SubscriptionStatus.CANCELLED;
+        free.cancelledAt = new Date();
+        free.endsAt = new Date();
+        await free.save({ session });
+      }
       const { startsAt, endsAt } = computePeriod(
         new Date(),
-        brand.subscriptionEndsAt,
+        free ? null : brand.subscriptionEndsAt,
         subscription.planSnapshot.durationDays,
       );
       subscription.status = SubscriptionStatus.ACTIVE;

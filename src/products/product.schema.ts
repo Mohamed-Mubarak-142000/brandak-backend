@@ -30,7 +30,11 @@ export class Variant {
 const VariantSchema = SchemaFactory.createForClass(Variant);
 
 @Schema({ _id: false })
-class ProductImage extends ImageRefProp {}
+class ProductImage extends ImageRefProp {
+  /** The variant colour this photo shows; null = shown for every colour. */
+  @Prop({ type: String, default: null })
+  color?: string | null;
+}
 const ProductImageSchema = SchemaFactory.createForClass(ProductImage);
 
 @Schema({ timestamps: true })

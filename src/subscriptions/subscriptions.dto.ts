@@ -14,6 +14,7 @@ import {
   IsString,
   Length,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -102,6 +103,18 @@ class PlanLimitsDto {
   @IsInt()
   @Min(1)
   maxActiveProducts: number;
+
+  /** null = unlimited. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxOrdersPerMonth?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  maxImagesPerProduct?: number;
 }
 
 export class CreatePlanDto {

@@ -1,7 +1,8 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { PublicCache } from '@/common/cache';
 import { AuthUser, BrandContext, CurrentBrand, CurrentUser, Public, Roles } from '@/common/decorators';
-import { Role } from '@/common/enums';
+import { BillingPeriod, Role } from '@/common/enums';
 import { BrandMemberGuard } from '@/common/guards/brand-member.guard';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
 import {
@@ -11,14 +12,19 @@ import {
   ReasonDto,
   UpdateBrandDto,
 } from './brands.dto';
+import { SubscriptionsService } from '@/subscriptions/subscriptions.service';
 import { BrandsService } from './brands.service';
 
 @ApiTags('Brands')
 @Controller()
 export class BrandsController {
-  constructor(private readonly brands: BrandsService) {}
+  constructor(
+    private readonly brands: BrandsService,
+    private readonly subscriptions: SubscriptionsService,
+  ) {}
 
   @Public()
+  @PublicCache(60)
   @Get('brands')
   list(@Query() query: BrandsQueryDto) {
     return this.brands.listPublic(query);
@@ -26,8 +32,12 @@ export class BrandsController {
 
   @ApiBearerAuth()
   @Post('brand-applications')
-  apply(@CurrentUser() user: AuthUser, @Body() dto: CreateBrandApplicationDto) {
-    return this.brands.apply(user.userId, dto);
+  async apply(@CurrentUser() user: AuthUser, @Body() dto: CreateBrandApplicationDto) {
+    // Check the plan first so a bad plan never leaves a store behind without one.
+    await this.subscriptions.requirePlan(dto.planId);
+    const brand = await this.brands.apply(user.userId, dto);
+    const plan = await this.subscriptions.request(user.userId, brand.id, { planId: dto.planId, billingPeriod: dto.billingPeriod ?? BillingPeriod.MONTHLY });
+    return { ...brand, subscription: plan };
   }
 
   @ApiBearerAuth()
@@ -54,6 +64,7 @@ export class BrandsController {
 
   // Declared after `brands/me` so "me" is never treated as a slug.
   @Public()
+  @PublicCache(60)
   @Get('brands/:slug')
   bySlug(@Param('slug') slug: string) {
     return this.brands.getPublicBySlug(slug);

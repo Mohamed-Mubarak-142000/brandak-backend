@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { PublicCache } from '@/common/cache';
 import { AuthUser, BrandContext, CurrentBrand, CurrentUser, Public } from '@/common/decorators';
 import { BrandMemberGuard } from '@/common/guards/brand-member.guard';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
@@ -22,18 +23,21 @@ export class ProductsController {
   ) {}
 
   @Public()
+  @PublicCache(60)
   @Get('products')
   search(@Query() query: ProductsQueryDto) {
     return this.products.search(query);
   }
 
   @Public()
+  @PublicCache(60)
   @Get('products/:id')
   get(@Param('id', ParseObjectIdPipe) id: string) {
     return this.products.getPublic(id);
   }
 
   @Public()
+  @PublicCache(60)
   @Get('brands/:slug/products')
   async brandProducts(@Param('slug') slug: string, @Query() query: ProductsQueryDto) {
     const brand = await this.brands.getPublicBySlug(slug);

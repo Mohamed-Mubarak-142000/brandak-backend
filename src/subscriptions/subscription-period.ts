@@ -21,3 +21,15 @@ export function computePeriod(now: Date, currentPaidUntil: Date | null, duration
 export function monthlyEquivalent(price: number, durationDays: number) {
   return Math.round((price * 30 * 100) / durationDays) / 100;
 }
+
+/** Free subscriptions don't expire in practice; a paid plan replaces them. */
+export const FREE_DURATION_DAYS = 3650;
+
+/** The limits frozen into a subscription when it starts. */
+export function planLimits(plan: { limits: { maxActiveProducts: number; maxOrdersPerMonth?: number | null; maxImagesPerProduct?: number } }) {
+  return {
+    maxActiveProducts: plan.limits.maxActiveProducts,
+    maxOrdersPerMonth: plan.limits.maxOrdersPerMonth ?? null,
+    maxImagesPerProduct: plan.limits.maxImagesPerProduct ?? 10,
+  };
+}

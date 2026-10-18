@@ -2,6 +2,13 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import { BillingPeriod, SubscriptionStatus } from '@/common/enums';
 
+/** Older snapshots only have maxActiveProducts; missing limits mean "no limit". */
+export interface PlanLimitsSnapshot {
+  maxActiveProducts: number;
+  maxOrdersPerMonth?: number | null;
+  maxImagesPerProduct?: number;
+}
+
 /** Plan terms frozen at request time, so later price/limit edits don't change existing subscriptions. */
 @Schema({ _id: false })
 export class PlanSnapshot {
@@ -10,7 +17,7 @@ export class PlanSnapshot {
   @Prop({ required: true }) nameEn: string;
   @Prop({ required: true }) price: number;
   @Prop({ required: true }) durationDays: number;
-  @Prop({ type: Object, required: true }) limits: { maxActiveProducts: number };
+  @Prop({ type: Object, required: true }) limits: PlanLimitsSnapshot;
 }
 const PlanSnapshotSchema = SchemaFactory.createForClass(PlanSnapshot);
 

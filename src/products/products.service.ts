@@ -4,6 +4,7 @@ import { FilterQuery, Model, SortOrder, Types } from 'mongoose';
 import { FilePurpose, ProductStatus } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
+import { IMAGE_WIDTH, optimizedImage } from '@/common/utils/image';
 import { escapeRegex, normalizeSearchText } from '@/common/utils/text';
 import { BrandsService } from '@/brands/brands.service';
 import { CategoriesService } from '@/categories/categories.service';
@@ -59,7 +60,7 @@ export class ProductsService {
       categoryId,
       title: dto.title.trim(),
       description: dto.description ?? '',
-      images: await this.uploads.imageRefs(userId, dto.imageFileIds, FilePurpose.PRODUCT_IMAGE),
+      images: await this.productImages(userId, brandId, dto.imageFileIds, dto.imageColors),
       price: dto.price,
       compareAtPrice: dto.compareAtPrice ?? null,
       variants: dto.variants.map(toVariant),
@@ -82,7 +83,9 @@ export class ProductsService {
     this.assertCompareAtPrice(product.price, product.compareAtPrice);
     if (dto.tags) product.tags = dto.tags;
     if (dto.imageFileIds) {
-      product.images = await this.uploads.imageRefs(userId, dto.imageFileIds, FilePurpose.PRODUCT_IMAGE);
+      product.images = await this.productImages(userId, brandId, dto.imageFileIds, dto.imageColors);
+    } else if (dto.imageColors) {
+      product.images.forEach((img, i) => (img.color = cleanColor(dto.imageColors![i])));
     }
     if (dto.variants) this.applyVariants(product, dto.variants);
 
@@ -96,6 +99,69 @@ export class ProductsService {
     this.refreshDerived(product);
     await product.save();
     return product.toObject();
+  }
+
+  /** Photos allowed per product on the store's plan (10 without a plan, for drafts). */
+  async imageLimit(brandId: string) {
+    const current = await this.subscriptions.currentFor(brandId);
+    return current?.planSnapshot.limits.maxImagesPerProduct ?? 10;
+  }
+
+  private async productImages(userId: string, brandId: string, ids: string[], colors?: (string | null)[]) {
+    const max = await this.imageLimit(brandId);
+    if (ids.length > max) {
+      throw AppError.unprocessable('IMAGE_LIMIT', `Your plan allows up to ${max} images per product`);
+    }
+    const refs = await this.uploads.imageRefs(userId, ids, FilePurpose.PRODUCT_IMAGE);
+    return refs.map((r, i) => ({ ...r, color: cleanColor(colors?.[i]) }));
+  }
+
+  /** How many more products the plan lets the store publish; null when there is no active plan. */
+  async publishSlots(brandId: string): Promise<number | null> {
+    const current = await this.subscriptions.currentFor(brandId);
+    if (!current) return null;
+    const active = await this.products.countDocuments({ brandId: new Types.ObjectId(brandId), status: ProductStatus.ACTIVE });
+    return Math.max(0, current.planSnapshot.limits.maxActiveProducts - active);
+  }
+
+  /**
+   * Second step of a file import: downloads the product's image links and, when asked,
+   * publishes it once it has at least one photo. A link that fails is reported, not fatal.
+   */
+  async importImages(userId: string, brandId: string, id: string, urls: string[], publish: boolean, colors?: (string | null)[]) {
+    const product = await this.ownedOrThrow(brandId, id);
+    const room = Math.max(0, (await this.imageLimit(brandId)) - product.images.length);
+    const results = await Promise.all(
+      urls.slice(0, room).map((url) =>
+        this.uploads
+          .importFromUrl(userId, url, FilePurpose.PRODUCT_IMAGE)
+          .then((f) => ({ url, file: f, color: cleanColor(colors?.[urls.indexOf(url)]) }))
+          .catch((e: unknown) => ({ url, error: e instanceof AppError ? e.code : 'IMAGE_FETCH_FAILED' })),
+      ),
+    );
+    const ok = results.flatMap((r) => ('file' in r ? [r] : []));
+    if (ok.length) {
+      const refs = await this.uploads.imageRefs(userId, ok.map((r) => r.file.id), FilePurpose.PRODUCT_IMAGE);
+      product.images.push(...refs.map((ref, i) => ({ ...ref, color: ok[i].color })));
+    }
+    let publishError: string | null = null;
+    if (publish && product.status === ProductStatus.DRAFT && product.images.length) {
+      try {
+        await this.assertCanPublish(brandId, product._id);
+        product.status = ProductStatus.ACTIVE;
+        product.publishedAt ??= new Date();
+      } catch (e) {
+        publishError = e instanceof AppError ? e.code : 'PUBLISH_FAILED';
+      }
+    }
+    await product.save();
+    return {
+      id: product._id.toString(),
+      status: product.status,
+      imported: ok.length,
+      failed: results.flatMap((r) => ('error' in r ? [{ url: r.url, code: r.error }] : [])),
+      publishError,
+    };
   }
 
   /** Products with order history are archived rather than deleted; orders keep their own snapshot. */
@@ -169,7 +235,9 @@ export class ProductsService {
     return {
       ...this.toCard(product),
       description: product.description,
-      images: product.images.map((i) => i.url),
+      images: product.images.map((i) => optimizedImage(i.url, IMAGE_WIDTH.full)!),
+      /** Same order as images; a colour shows only its own photos (null = every colour). */
+      imageColors: product.images.map((i) => i.color ?? null),
       categoryId: product.categoryId.toString(),
       tags: product.tags,
       variants: product.variants.map((v) => ({
@@ -245,12 +313,12 @@ export class ProductsService {
       title: p.title,
       price: p.price,
       compareAtPrice: p.compareAtPrice,
-      imageUrl: p.images[0]?.url ?? null,
+      imageUrl: optimizedImage(p.images[0]?.url, IMAGE_WIDTH.card),
       inStock: p.totalStock > 0,
       ratingAvg: p.ratingAvg,
       ratingCount: p.ratingCount,
       brand: brand?.name
-        ? { id: brand._id.toString(), name: brand.name, slug: brand.slug, logoUrl: brand.logo?.url ?? null }
+        ? { id: brand._id.toString(), name: brand.name, slug: brand.slug, logoUrl: optimizedImage(brand.logo?.url, IMAGE_WIDTH.logo) }
         : { id: String(p.brandId) },
     };
   }
@@ -265,3 +333,5 @@ function toVariant(dto: VariantDto) {
     stock: dto.stock,
   };
 }
+
+const cleanColor = (c?: string | null) => c?.trim().slice(0, 30) || null;

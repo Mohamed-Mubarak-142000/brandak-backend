@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { PublicCache } from '@/common/cache';
 import { AuthUser, CurrentUser, Public, Roles } from '@/common/decorators';
 import { Role } from '@/common/enums';
 import { GOVERNORATES } from '@/common/governorates';
@@ -13,6 +14,7 @@ export class CategoriesController {
   constructor(private readonly categories: CategoriesService) {}
 
   @Public()
+  @PublicCache(600)
   @Get('categories')
   list(@Query() query: CategoriesQueryDto) {
     return this.categories.listActive(query.storeType);
@@ -20,6 +22,7 @@ export class CategoriesController {
 
   /** Reference data for address forms and shipping zones. */
   @Public()
+  @PublicCache(600)
   @Get('governorates')
   governorates() {
     return GOVERNORATES;

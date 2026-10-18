@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { PublicCache } from '@/common/cache';
 import { AuthUser, BrandContext, CurrentBrand, CurrentUser, Public, Roles } from '@/common/decorators';
 import { Role } from '@/common/enums';
 import { BrandMemberGuard } from '@/common/guards/brand-member.guard';
@@ -22,6 +23,7 @@ export class SubscriptionsController {
   constructor(private readonly subscriptions: SubscriptionsService) {}
 
   @Public()
+  @PublicCache(300)
   @Get('subscription-plans')
   plans() {
     return this.subscriptions.listActivePlans();
