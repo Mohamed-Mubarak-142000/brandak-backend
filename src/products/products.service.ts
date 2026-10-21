@@ -7,6 +7,7 @@ import { Lean, paginate, PageResult } from '@/common/pagination';
 import { IMAGE_WIDTH, optimizedImage } from '@/common/utils/image';
 import { AdPlacement } from '@/ads/ad.schema';
 import { AdsService } from '@/ads/ads.service';
+import { AlertsService } from '@/alerts/alerts.service';
 import { PromotionsService } from '@/promotions/promotions.service';
 import { activeSalePercent, salePrice } from '@/promotions/price-math';
 import { escapeRegex, normalizeSearchText } from '@/common/utils/text';
@@ -38,6 +39,7 @@ export class ProductsService {
     private readonly uploads: UploadsService,
     private readonly promotions: PromotionsService,
     private readonly ads: AdsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   // ---------- Brand owner ----------
@@ -72,6 +74,7 @@ export class ProductsService {
       price: dto.price,
       compareAtPrice: dto.compareAtPrice ?? null,
       sale: await this.saleFrom(dto.sale),
+      wholesale: wholesaleFrom(dto.wholesale, dto.price),
       variants: dto.variants.map(toVariant),
       tags: dto.tags ?? [],
       status,
@@ -79,6 +82,7 @@ export class ProductsService {
     });
     this.refreshDerived(product);
     await product.save();
+    if (status === ProductStatus.ACTIVE) await this.alerts.notifyFollowers(product.toObject(), 'NEW_PRODUCT');
     return product.toObject();
   }
 
@@ -90,6 +94,8 @@ export class ProductsService {
     if (dto.price !== undefined) product.price = dto.price;
     if (dto.compareAtPrice !== undefined) product.compareAtPrice = dto.compareAtPrice;
     if (dto.sale !== undefined) product.sale = await this.saleFrom(dto.sale);
+    if (dto.wholesale !== undefined) product.wholesale = wholesaleFrom(dto.wholesale, product.price);
+    else if (dto.price !== undefined && product.wholesale) product.wholesale = wholesaleFrom(product.wholesale, product.price);
     this.assertCompareAtPrice(product.price, product.compareAtPrice);
     if (dto.tags) product.tags = dto.tags;
     if (dto.imageFileIds) {
@@ -99,6 +105,8 @@ export class ProductsService {
     }
     if (dto.variants) this.applyVariants(product, dto.variants);
 
+    const firstPublish = dto.status === ProductStatus.ACTIVE && !product.publishedAt;
+    const newSale = !!dto.sale && activeSalePercent(product.sale) > 0;
     if (dto.status && dto.status !== product.status) {
       if (dto.status === ProductStatus.ACTIVE) {
         await this.assertCanPublish(brandId, product._id);
@@ -108,6 +116,10 @@ export class ProductsService {
     }
     this.refreshDerived(product);
     await product.save();
+    // Price drops, sizes back in stock, and news for the store's followers.
+    await this.alerts.check(product._id);
+    if (firstPublish) await this.alerts.notifyFollowers(product.toObject(), 'NEW_PRODUCT');
+    else if (newSale && product.status === ProductStatus.ACTIVE) await this.alerts.notifyFollowers(product.toObject(), 'NEW_SALE');
     return product.toObject();
   }
 
@@ -204,7 +216,18 @@ export class ProductsService {
       await this.ownedOrThrow(brandId, id);
       throw AppError.unprocessable('INVALID_STOCK_CHANGE', 'Variant not found or stock would become negative');
     }
+    if (delta > 0) await this.alerts.check(updated._id);
     return updated.toObject();
+  }
+
+  /** Newest products from a set of stores (the customer's followed stores). */
+  async fromBrands(brandIds: Types.ObjectId[], query: { page: number; limit: number }) {
+    const visible = await this.brands.visibleBrandIds({ _id: { $in: brandIds } });
+    const page = await paginate(this.products, { status: ProductStatus.ACTIVE, brandId: { $in: visible } }, query, {
+      sort: { publishedAt: -1, _id: -1 },
+      populate: 'brandId',
+    });
+    return new PageResult(page.items.map((p) => this.toCard(p)), page.page, page.limit, page.total);
   }
 
   // ---------- Public catalog ----------
@@ -375,6 +398,7 @@ export class ProductsService {
       inStock: p.totalStock > 0,
       ratingAvg: p.ratingAvg,
       ratingCount: p.ratingCount,
+      wholesale: p.wholesale ?? null,
       brand: brand?.name
         ? { id: brand._id.toString(), name: brand.name, slug: brand.slug, logoUrl: optimizedImage(brand.logo?.url, IMAGE_WIDTH.logo) }
         : { id: String(p.brandId) },
@@ -393,3 +417,20 @@ function toVariant(dto: VariantDto) {
 }
 
 const cleanColor = (c?: string | null) => c?.trim().slice(0, 30) || null;
+
+/**
+ * Normalises wholesale terms: tiers sorted by quantity, each cheaper than the one before and
+ * than the regular price. Returns null when there is nothing wholesale about the product.
+ */
+export function wholesaleFrom(dto: { minQty: number; tiers: { minQty: number; price: number }[] } | null | undefined, price: number) {
+  if (!dto) return null;
+  const tiers = [...dto.tiers].sort((a, b) => a.minQty - b.minQty).map((t) => ({ minQty: t.minQty, price: t.price }));
+  tiers.forEach((t, i) => {
+    const prev = tiers[i - 1];
+    if ((prev && (t.minQty === prev.minQty || t.price >= prev.price)) || t.price >= price) {
+      throw AppError.unprocessable('INVALID_WHOLESALE', 'Each quantity price must be lower than the regular price and the tier before it');
+    }
+  });
+  if (!tiers.length && dto.minQty <= 1) return null;
+  return { minQty: dto.minQty, tiers };
+}

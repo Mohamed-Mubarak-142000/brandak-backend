@@ -1,4 +1,4 @@
-import { activeSalePercent, couponDiscount, salePrice, unitPriceNow } from './price-math';
+import { activeSalePercent, couponDiscount, salePrice, tierPrice, unitPriceFor, unitPriceNow } from './price-math';
 
 describe('price math', () => {
   const now = new Date('2026-11-27T12:00:00Z');
@@ -23,5 +23,18 @@ describe('price math', () => {
     expect(couponDiscount({ type: 'PERCENT', value: 50, maxDiscount: 100 }, 700)).toBe(100);
     expect(couponDiscount({ type: 'FIXED', value: 50 }, 700)).toBe(50);
     expect(couponDiscount({ type: 'FIXED', value: 900 }, 700)).toBe(700);
+  });
+
+  it('gives the best wholesale tier reached, never above the regular price', () => {
+    const wholesale = { minQty: 6, tiers: [{ minQty: 12, price: 80 }, { minQty: 50, price: 70 }] };
+    expect(tierPrice(wholesale, 11)).toBeNull();
+    expect(tierPrice(wholesale, 12)).toBe(80);
+    expect(tierPrice(wholesale, 60)).toBe(70);
+    expect(tierPrice(null, 100)).toBeNull();
+    const product = { price: 100, wholesale };
+    expect(unitPriceFor(product, {}, 5, now)).toBe(100);
+    expect(unitPriceFor(product, {}, 12, now)).toBe(80);
+    // A sale cheaper than the tier wins.
+    expect(unitPriceFor({ ...product, sale: { ...sale, percent: 30 } }, {}, 12, now)).toBe(70);
   });
 });

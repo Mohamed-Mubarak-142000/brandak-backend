@@ -63,6 +63,32 @@ export class SaleDto {
   campaignId?: string;
 }
 
+export class WholesaleTierDto {
+  @IsInt()
+  @Min(2)
+  @Max(100_000)
+  minQty: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
+  @Max(1_000_000)
+  price: number;
+}
+
+export class WholesaleDto {
+  /** Fewest pieces of this product per order (all sizes and colours together). */
+  @IsInt()
+  @Min(1)
+  @Max(10_000)
+  minQty: number;
+
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ValidateNested({ each: true })
+  @Type(() => WholesaleTierDto)
+  tiers: WholesaleTierDto[];
+}
+
 export class CreateProductDto {
   @IsString()
   @Length(2, 120)
@@ -92,6 +118,12 @@ export class CreateProductDto {
   @ValidateNested()
   @Type(() => SaleDto)
   sale?: SaleDto | null;
+
+  /** Quantity prices and a minimum order; null removes them. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WholesaleDto)
+  wholesale?: WholesaleDto | null;
 
   /** Ids from POST /uploads with purpose PRODUCT_IMAGE; the first is the cover image. */
   @IsArray()

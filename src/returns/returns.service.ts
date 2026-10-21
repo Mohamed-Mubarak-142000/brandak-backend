@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, Types } from 'mongoose';
+import { AlertsService } from '@/alerts/alerts.service';
 import { AuditLogsService } from '@/audit-logs/audit-logs.service';
 import { Brand } from '@/brands/brand.schema';
 import { BrandMembersService } from '@/brands/brand-members.service';
@@ -61,6 +62,7 @@ export class ReturnsService {
     private readonly members: BrandMembersService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditLogsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   /** What the customer can still return from an order, and until when. */
@@ -207,6 +209,7 @@ export class ReturnsService {
       return res.toObject();
     });
 
+    if (to === ReturnStatus.RECEIVED) for (const id of new Set(updated.items.map((i) => i.productId.toString()))) await this.alerts.check(id);
     if (by.actor !== 'CUSTOMER') {
       await this.audit.log({
         actorId: by.userId,

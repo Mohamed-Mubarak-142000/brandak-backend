@@ -28,6 +28,8 @@ import { QuestionsModule } from './questions/questions.module';
 import { ReturnsModule } from './returns/returns.module';
 import { SupportModule } from './support/support.module';
 import { AdsModule } from './ads/ads.module';
+import { AiModule } from './ai/ai.module';
+import { AlertsModule } from './alerts/alerts.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -87,6 +89,8 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     ReturnsModule,
     SupportModule,
     AdsModule,
+    AiModule,
+    AlertsModule,
     ProductsModule,
     AddressesModule,
     WishlistsModule,

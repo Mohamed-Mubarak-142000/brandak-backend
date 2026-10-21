@@ -86,6 +86,15 @@ export class CategoriesService {
     return [new Types.ObjectId(id), ...children.map((c) => c._id)];
   }
 
+  /** Active categories among `ids` and their children, with Arabic names (for AI suggestions). */
+  async activeWithChildren(ids: Types.ObjectId[]) {
+    return this.categories
+      .find({ isActive: true, deletedAt: null, $or: [{ _id: { $in: ids } }, { parentId: { $in: ids } }] })
+      .select('nameAr')
+      .lean()
+      .then((rows) => rows.map((c) => ({ id: c._id.toString(), name: c.nameAr })));
+  }
+
   private invalid() {
     return AppError.unprocessable('INVALID_CATEGORY', 'Unknown or inactive category');
   }

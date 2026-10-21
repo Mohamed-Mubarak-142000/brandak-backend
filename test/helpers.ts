@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
+import { Test, TestingModuleBuilder } from '@nestjs/testing';
 import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import request from 'supertest';
 import { CONTACT_CHANNEL, LogContactChannel } from '@/auth/contact-channel';
@@ -18,7 +18,8 @@ export interface TestContext {
   close: () => Promise<void>;
 }
 
-export async function createTestApp(): Promise<TestContext> {
+/** `override` swaps providers (e.g. a fake AI model) before the app compiles. */
+export async function createTestApp(override?: (b: TestingModuleBuilder) => TestingModuleBuilder): Promise<TestContext> {
   const replSet = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: 'wiredTiger' } });
   Object.assign(process.env, {
     NODE_ENV: 'test',
@@ -33,6 +34,8 @@ export async function createTestApp(): Promise<TestContext> {
     SMTP_HOST: '',
     SMTP_USER: '',
     SMTP_PASS: '',
+    // Never call real AI from tests.
+    GEMINI_API_KEY: '',
     SEED_ADMIN_EMAIL: 'admin@brandak.test',
     SEED_ADMIN_PASSWORD: 'AdminPass123',
   });
@@ -41,7 +44,8 @@ export async function createTestApp(): Promise<TestContext> {
   const { setupApp } = await import('@/setup-app');
   const { seed } = await import('@/seed/seed');
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  const moduleRef = await (override ? override(builder) : builder).compile();
   const app = moduleRef.createNestApplication({ logger: false });
   setupApp(app);
   await app.init();

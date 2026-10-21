@@ -25,6 +25,11 @@ const envSchema = z.object({
   /** Shared secret Vercel Cron sends to /internal/cron/* endpoints. */
   CRON_SECRET: z.string().min(16).optional(),
   SUBSCRIPTION_GRACE_DAYS: z.coerce.number().int().min(0).default(0),
+  /** Google AI Studio key (free tier) for product drafts from a photo. Unset = feature hidden. */
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  /** Product drafts per store per day. */
+  AI_DAILY_LIMIT: z.coerce.number().int().positive().default(30),
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().optional(),
 });

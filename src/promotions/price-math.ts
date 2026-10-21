@@ -33,3 +33,32 @@ export function couponDiscount(c: CouponTerms, subtotal: number) {
   const capped = c.type === 'PERCENT' && c.maxDiscount != null ? Math.min(raw, c.maxDiscount) : raw;
   return round2(Math.max(0, Math.min(capped, subtotal)));
 }
+
+export interface WholesaleTerms {
+  /** Fewest pieces of the product (all variants together) a customer may order. */
+  minQty: number;
+  /** Unit price from each quantity up, e.g. [{ minQty: 12, price: 80 }, { minQty: 50, price: 70 }]. */
+  tiers: { minQty: number; price: number }[];
+}
+
+/** The best wholesale unit price reached by `qty` pieces (null below the first tier). */
+export function tierPrice(wholesale: WholesaleTerms | null | undefined, qty: number) {
+  let best: number | null = null;
+  for (const t of wholesale?.tiers ?? []) if (qty >= t.minQty && (best === null || t.price < best)) best = t.price;
+  return best;
+}
+
+/**
+ * Unit price for `productQty` pieces of the product in the cart (all variants count together):
+ * the regular price now, or the wholesale tier price when that is lower.
+ */
+export function unitPriceFor(
+  product: { price: number; sale?: SaleWindow | null; wholesale?: WholesaleTerms | null },
+  variant: { price?: number | null },
+  productQty: number,
+  now = new Date(),
+) {
+  const regular = unitPriceNow(product, variant, now);
+  const tier = tierPrice(product.wholesale, productQty);
+  return tier !== null && tier < regular ? tier : regular;
+}

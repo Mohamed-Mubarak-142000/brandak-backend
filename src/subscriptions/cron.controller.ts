@@ -8,6 +8,7 @@ import { Env } from '@/config/env';
 import { CartsService } from '@/carts/carts.service';
 import { OrdersService } from '@/orders/orders.service';
 import { SupportService } from '@/support/support.service';
+import { AlertsService } from '@/alerts/alerts.service';
 import { SubscriptionJobs } from './subscription-jobs';
 
 /**
@@ -41,5 +42,7 @@ export class CronController {
     await this.moduleRef.get(CartsService, { strict: false }).remindAbandoned();
     // Buyer-protection cases the store left unanswered for 48 hours go to Fatrina.
     await this.moduleRef.get(SupportService, { strict: false }).escalateOverdue();
+    // Sales that started on schedule: price-drop alerts.
+    await this.moduleRef.get(AlertsService, { strict: false }).checkScheduled();
   }
 }

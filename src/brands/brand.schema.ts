@@ -51,6 +51,10 @@ export class BrandSettings {
   @Prop({ default: 14, min: 0, max: 30 })
   returnDays: number;
 
+  /** Customers may collect orders from the store/showroom instead of delivery (no shipping fee). */
+  @Prop({ type: Object, default: () => ({ enabled: false, address: '', governorate: null, hours: '', mapUrl: '' }) })
+  pickup: { enabled: boolean; address: string; governorate: string | null; hours: string; mapUrl: string };
+
   /** Lets an owner pause new orders (e.g. on holiday) without hiding the store. */
   @Prop({ default: true })
   acceptsOrders: boolean;

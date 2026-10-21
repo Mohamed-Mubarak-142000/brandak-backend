@@ -8,15 +8,18 @@ import { Brand } from '@/brands/brand.schema';
 import { BrandsService } from '@/brands/brands.service';
 import { Product } from '@/products/product.schema';
 import { Cart, CartDocument, CartItem } from './cart.schema';
-import { unitPriceNow } from '@/promotions/price-math';
+import { unitPriceFor } from '@/promotions/price-math';
 import { CONTACT_CHANNEL, ContactChannel } from '@/auth/contact-channel';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { UsersService } from '@/users/users.service';
 
 export const MAX_QTY_PER_LINE = 50;
+/** Wholesale products sell by the dozen or carton. */
+export const MAX_WHOLESALE_QTY = 1000;
 const MAX_LINES = 50;
 
-export type LineIssue = 'UNAVAILABLE' | 'OUT_OF_STOCK' | 'INSUFFICIENT_STOCK';
+/** BELOW_MIN_QTY: a wholesale product with fewer pieces in the cart than its minimum. */
+export type LineIssue = 'UNAVAILABLE' | 'OUT_OF_STOCK' | 'INSUFFICIENT_STOCK' | 'BELOW_MIN_QTY';
 
 export interface PricedLine {
   itemId: string;
@@ -31,6 +34,8 @@ export interface PricedLine {
   quantity: number;
   lineTotal: number;
   available: number;
+  /** Wholesale minimum for the product (1 when there is none). */
+  minQty: number;
   issue: LineIssue | null;
 }
 
@@ -136,7 +141,7 @@ export class CartsService {
       new this.carts({ userId: new Types.ObjectId(userId), brandId: brand._id, items: [] });
     const existing = cart.items.find((i) => i.productId.equals(product._id) && i.variantId.equals(variant._id));
     const nextQty = (existing?.quantity ?? 0) + quantity;
-    this.assertQuantity(nextQty, variant.stock);
+    this.assertQuantity(nextQty, variant.stock, maxQty(product));
     if (existing) existing.quantity = nextQty;
     else {
       if (cart.items.length >= MAX_LINES) throw AppError.unprocessable('CART_FULL', 'Your cart is full');
@@ -152,7 +157,7 @@ export class CartsService {
     if (!cart || !item) throw AppError.notFound('Cart item');
     const product = await this.products.findById(item.productId).lean();
     const variant = product?.variants.find((v) => v._id.equals(item.variantId));
-    this.assertQuantity(quantity, variant?.stock ?? 0);
+    this.assertQuantity(quantity, variant?.stock ?? 0, product ? maxQty(product) : MAX_QTY_PER_LINE);
     item.quantity = quantity;
     await cart.save();
     return this.view(userId, brandId);
@@ -184,14 +189,18 @@ export class CartsService {
     const products = await this.products
       .find({ _id: { $in: items.map((i) => i.productId) }, brandId: new Types.ObjectId(brandId) })
       .lean();
+    const perProduct = productQuantities(items);
     return items.map((item) => {
       const product = products.find((p) => p._id.equals(item.productId));
       const variant = product?.variants.find((v) => v._id.equals(item.variantId));
-      const unitPrice = variant ? unitPriceNow(product!, variant) : 0;
+      const productQty = perProduct.get(item.productId.toString()) ?? item.quantity;
+      const unitPrice = variant ? unitPriceFor(product!, variant, productQty) : 0;
+      const minQty = product?.wholesale?.minQty ?? 1;
       let issue: LineIssue | null = null;
       if (!product || !variant || product.status !== ProductStatus.ACTIVE) issue = 'UNAVAILABLE';
       else if (variant.stock === 0) issue = 'OUT_OF_STOCK';
       else if (variant.stock < item.quantity) issue = 'INSUFFICIENT_STOCK';
+      else if (productQty < minQty) issue = 'BELOW_MIN_QTY';
       return {
         itemId: item._id.toString(),
         productId: item.productId.toString(),
@@ -204,15 +213,16 @@ export class CartsService {
         unitPrice,
         quantity: item.quantity,
         lineTotal: Math.round(unitPrice * item.quantity * 100) / 100,
-        available: variant ? Math.min(variant.stock, MAX_QTY_PER_LINE) : 0,
+        available: variant ? Math.min(variant.stock, product ? maxQty(product) : MAX_QTY_PER_LINE) : 0,
+        minQty,
         issue,
       };
     });
   }
 
-  private assertQuantity(quantity: number, stock: number) {
-    if (quantity > MAX_QTY_PER_LINE) {
-      throw AppError.unprocessable('QUANTITY_LIMIT', `Up to ${MAX_QTY_PER_LINE} pieces per item`);
+  private assertQuantity(quantity: number, stock: number, max = MAX_QTY_PER_LINE) {
+    if (quantity > max) {
+      throw AppError.unprocessable('QUANTITY_LIMIT', `Up to ${max} pieces per item`);
     }
     if (quantity > stock) {
       throw AppError.unprocessable('INSUFFICIENT_STOCK', 'Not enough stock for this quantity', [
@@ -220,4 +230,13 @@ export class CartsService {
       ]);
     }
   }
+}
+
+const maxQty = (p: { wholesale?: unknown }) => (p.wholesale ? MAX_WHOLESALE_QTY : MAX_QTY_PER_LINE);
+
+/** Pieces of each product in the cart, all variants together (wholesale tiers count them so). */
+export function productQuantities(items: { productId: Types.ObjectId; quantity: number }[]) {
+  const map = new Map<string, number>();
+  for (const i of items) map.set(i.productId.toString(), (map.get(i.productId.toString()) ?? 0) + i.quantity);
+  return map;
 }

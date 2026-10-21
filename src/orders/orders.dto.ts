@@ -13,14 +13,21 @@ import {
   Matches,
   MaxLength,
   IsUrl,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { OrderPaymentMethod, OrderStatus } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 
 export class QuoteDto {
+  /** PICKUP collects the order from the store (when it offers pickup); no address needed. */
+  @IsOptional()
+  @IsIn(['DELIVERY', 'PICKUP'])
+  fulfillment?: 'DELIVERY' | 'PICKUP';
+
+  @ValidateIf((o: QuoteDto) => o.fulfillment !== 'PICKUP')
   @IsMongoId()
-  addressId: string;
+  addressId?: string;
 
   @IsOptional()
   @IsString()

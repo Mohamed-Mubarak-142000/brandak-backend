@@ -22,6 +22,7 @@ import { PromotionsService } from '@/promotions/promotions.service';
 import { UsersService } from '@/users/users.service';
 import { BrandMembersService } from '@/brands/brand-members.service';
 import { NotificationsService } from '@/notifications/notifications.service';
+import { AlertsService } from '@/alerts/alerts.service';
 import { Product } from '@/products/product.schema';
 import { BrandBlock } from './brand-block.schema';
 import { Order } from './order.schema';
@@ -54,6 +55,7 @@ export class OrdersService {
     private readonly otp: OtpService,
     private readonly users: UsersService,
     private readonly promotions: PromotionsService,
+    private readonly alerts: AlertsService,
   ) {}
 
   // ---------- Customer ----------
@@ -342,6 +344,8 @@ export class OrdersService {
     });
 
     await this.notifyStatus(updated.toObject(), by.actor);
+    // Stock put back by a cancellation can be someone's "back in stock".
+    if (to === OrderStatus.CANCELLED || to === OrderStatus.REFUSED) for (const id of new Set(updated.items.map((i) => i.productId.toString()))) await this.alerts.check(id);
     return this.toView(updated.toObject(), by.actor);
   }
 
@@ -349,7 +353,10 @@ export class OrdersService {
     const payload = {
       type: 'ORDER_STATUS_CHANGED',
       title: `طلب ${order.orderNumber}`,
-      body: `حالة الطلب: ${STATUS_AR[order.status]}`,
+      body:
+        order.fulfillment === 'PICKUP' && order.status === OrderStatus.SHIPPED
+          ? 'طلبك جاهز، تقدر تستلمه من المتجر'
+          : `حالة الطلب: ${STATUS_AR[order.status]}`,
       data: { orderId: order._id.toString(), status: order.status },
     };
     if (actor !== 'CUSTOMER') await this.notifications.notify(order.userId.toString(), payload);
@@ -405,7 +412,9 @@ export class OrdersService {
     return {
       ...base,
       items: order.items.map((i) => ({ ...i, productId: i.productId.toString(), variantId: i.variantId.toString() })),
-      address: order.addressSnapshot,
+      address: order.addressSnapshot ?? null,
+      fulfillment: order.fulfillment ?? 'DELIVERY',
+      pickup: order.pickup ?? null,
       subtotal: order.subtotal,
       shippingFee: order.shippingFee,
       discountTotal: order.discountTotal,

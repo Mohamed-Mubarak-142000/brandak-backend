@@ -8,11 +8,11 @@ import { AddressesService, toView as addressView } from '@/addresses/addresses.s
 import { BrandDocument } from '@/brands/brand.schema';
 import { BrandMembersService } from '@/brands/brand-members.service';
 import { BrandsService } from '@/brands/brands.service';
-import { CartsService } from '@/carts/carts.service';
+import { CartsService, productQuantities } from '@/carts/carts.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Product } from '@/products/product.schema';
 import { OtpService } from '@/auth/otp.service';
-import { unitPriceNow } from '@/promotions/price-math';
+import { unitPriceFor } from '@/promotions/price-math';
 import { PromotionsService } from '@/promotions/promotions.service';
 import { CommissionsService } from '@/commissions/commissions.service';
 import { UsersService } from '@/users/users.service';
@@ -46,7 +46,7 @@ export class CheckoutService {
   /** Read-only preview with the same rules as placing the order. */
   async quote(userId: string, brandId: string, dto: QuoteDto) {
     const brand = await this.orderableBrand(brandId);
-    const address = await this.addresses.getOwned(userId, dto.addressId);
+    const where = await this.destination(userId, brand, dto);
     const cart = await this.carts.find(userId, brandId);
     if (!cart?.items.length) throw AppError.unprocessable('CART_EMPTY', 'Your cart is empty');
     const lines = await this.carts.priceLines(brandId, cart.items);
@@ -56,7 +56,8 @@ export class CheckoutService {
     const coupon = dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, subtotal) : null;
     return {
       items: lines,
-      ...computeQuote(lines, brand.settings, address.governorate, coupon?.discount ?? 0),
+      ...computeQuote(lines, brand.settings, where.governorate, coupon?.discount ?? 0),
+      fulfillment: where.fulfillment,
       coupon: coupon && { code: coupon.code, discount: coupon.discount },
       paymentMethods: [OrderPaymentMethod.COD],
     };
@@ -77,11 +78,12 @@ export class CheckoutService {
     // New customers, and those who refuse parcels, confirm the order with an email code first.
     const confirm = needsConfirmation((await this.ordersService.trustFor(userId)).level);
     const firstStatus = confirm ? OrderStatus.AWAITING_CONFIRMATION : OrderStatus.PENDING;
-    const [user, address, cart] = await Promise.all([
+    const [user, where, cart] = await Promise.all([
       this.users.getById(userId),
-      this.addresses.getOwned(userId, dto.addressId),
+      this.destination(userId, brand, dto),
       this.carts.find(userId, brandId),
     ]);
+    const address = where.address;
     if (!cart?.items.length) throw AppError.unprocessable('CART_EMPTY', 'Your cart is empty');
 
     let order;
@@ -89,6 +91,7 @@ export class CheckoutService {
       order = await withTransaction(this.connection, async (session) => {
         const items = [];
         const problems: ErrorDetail[] = [];
+        const perProduct = productQuantities(cart.items);
         for (const line of cart.items) {
           const product = await this.products
             .findOne({ _id: line.productId, brandId: brand._id, status: ProductStatus.ACTIVE })
@@ -96,6 +99,11 @@ export class CheckoutService {
           const variant = product?.variants.find((v) => v._id.equals(line.variantId));
           if (!product || !variant) {
             problems.push({ field: line._id.toString(), reason: 'UNAVAILABLE' });
+            continue;
+          }
+          const productQty = perProduct.get(product._id.toString()) ?? line.quantity;
+          if (productQty < (product.wholesale?.minQty ?? 1)) {
+            problems.push({ field: line._id.toString(), reason: 'BELOW_MIN_QTY' });
             continue;
           }
           // Conditional decrement: never lets stock go negative, even with concurrent checkouts.
@@ -108,7 +116,7 @@ export class CheckoutService {
             problems.push({ field: line._id.toString(), reason: 'INSUFFICIENT_STOCK' });
             continue;
           }
-          const unitPrice = unitPriceNow(product, variant);
+          const unitPrice = unitPriceFor(product, variant, productQty);
           items.push({
             productId: product._id,
             variantId: variant._id,
@@ -127,7 +135,7 @@ export class CheckoutService {
 
         const itemsTotal = items.reduce((s, i) => s + i.lineTotal, 0);
         const coupon = dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, itemsTotal) : null;
-        const totals = computeQuote(items, brand.settings, address.governorate, coupon?.discount ?? 0);
+        const totals = computeQuote(items, brand.settings, where.governorate, coupon?.discount ?? 0);
         if (dto.expectedTotal !== undefined && Math.abs(dto.expectedTotal - totals.grandTotal) > 0.009) {
           throw new AppError('PRICE_CHANGED', 'Prices or shipping changed. Please review the new total.', HttpStatus.CONFLICT, [
             { field: 'grandTotal', reason: String(totals.grandTotal) },
@@ -147,9 +155,11 @@ export class CheckoutService {
               userId: user._id,
               brandId: brand._id,
               brandSnapshot: { name: brand.name, slug: brand.slug, phone: brand.contact?.phone },
-              customer: { name: address.recipientName || user.name, phone: address.phone || user.phone },
+              customer: { name: address?.recipientName || user.name, phone: address?.phone || user.phone },
               items,
-              addressSnapshot: addressView(address),
+              addressSnapshot: address ? addressView(address) : null,
+              fulfillment: where.fulfillment,
+              pickup: where.pickup,
               subtotal: totals.subtotal,
               shippingFee: totals.shippingFee,
               discountTotal: totals.discountTotal,
@@ -191,6 +201,23 @@ export class CheckoutService {
       });
     }
     return this.ordersService.toView(order.toObject());
+  }
+
+  /** Delivery address (and its governorate for shipping) or the store's pickup point. */
+  private async destination(userId: string, brand: BrandDocument, dto: QuoteDto) {
+    if (dto.fulfillment === 'PICKUP') {
+      const p = brand.settings.pickup;
+      if (!p?.enabled) throw AppError.unprocessable('PICKUP_NOT_AVAILABLE', 'This store does not offer pickup');
+      return {
+        fulfillment: 'PICKUP' as const,
+        governorate: null,
+        address: null,
+        pickup: { address: p.address, governorate: p.governorate, hours: p.hours, mapUrl: p.mapUrl },
+      };
+    }
+    if (!dto.addressId) throw AppError.unprocessable('ADDRESS_REQUIRED', 'Choose a delivery address');
+    const address = await this.addresses.getOwned(userId, dto.addressId);
+    return { fulfillment: 'DELIVERY' as const, governorate: address.governorate as string, address, pickup: null };
   }
 
   private async orderableBrand(brandId: string): Promise<BrandDocument> {

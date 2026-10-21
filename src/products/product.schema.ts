@@ -66,6 +66,10 @@ export class Product {
   @Prop({ type: Object, default: null })
   sale: { percent: number; startsAt: Date; endsAt: Date; campaignId?: Types.ObjectId | null } | null;
 
+  /** Wholesale: a minimum per order and cheaper unit prices by quantity (mostly warehouses). */
+  @Prop({ type: Object, default: null })
+  wholesale: { minQty: number; tiers: { minQty: number; price: number }[] } | null;
+
   @Prop({ type: [VariantSchema], default: [] })
   variants: Variant[];
 

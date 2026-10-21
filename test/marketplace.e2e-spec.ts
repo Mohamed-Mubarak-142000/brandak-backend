@@ -378,7 +378,7 @@ describe('Fatrina marketplace (e2e)', () => {
         .post(api(`/carts/${shop.brandId}/items`))
         .set(auth(customer.token))
         .send({ productId: product._id, variantId: variant(0), quantity: 99 })
-        .expect(400); // above the per-line maximum
+        .expect(422); // above the per-line maximum (wholesale products allow more)
       const cart = await ctx
         .http()
         .post(api(`/carts/${shop.brandId}/items`))

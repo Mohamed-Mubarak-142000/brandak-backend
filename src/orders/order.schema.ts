@@ -48,8 +48,16 @@ export class Order {
   @Prop({ type: [OrderItemSchema], required: true })
   items: OrderItem[];
 
-  @Prop({ type: Object, required: true })
-  addressSnapshot: Record<string, unknown>;
+  /** Delivery address; null for orders collected from the store. */
+  @Prop({ type: Object, default: null })
+  addressSnapshot: Record<string, unknown> | null;
+
+  @Prop({ default: 'DELIVERY' })
+  fulfillment: 'DELIVERY' | 'PICKUP';
+
+  /** Where to collect a PICKUP order, copied from the store at checkout. */
+  @Prop({ type: Object, default: null })
+  pickup: { address: string; governorate: string | null; hours: string; mapUrl: string } | null;
 
   /** Coupon used on the order; fundedBy says who pays for the discount. */
   @Prop({ type: Object })

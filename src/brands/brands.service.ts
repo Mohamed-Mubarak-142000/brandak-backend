@@ -128,7 +128,20 @@ export class BrandsService {
       if (zones && new Set(zones.map((z) => z.governorate)).size !== zones.length) {
         throw AppError.unprocessable('DUPLICATE_ZONE', 'Each governorate can appear only once');
       }
+      const pickup = dto.settings.pickup;
+      if (pickup?.enabled && !pickup.address?.trim()) {
+        throw AppError.unprocessable('PICKUP_ADDRESS_REQUIRED', 'Write the pickup address');
+      }
       Object.assign(brand.settings, dto.settings);
+      if (pickup) {
+        brand.settings.pickup = {
+          enabled: pickup.enabled,
+          address: pickup.address?.trim() ?? '',
+          governorate: pickup.governorate ?? null,
+          hours: pickup.hours?.trim() ?? '',
+          mapUrl: pickup.mapUrl ?? '',
+        };
+      }
       brand.markModified('settings');
     }
     await brand.save();
@@ -372,6 +385,7 @@ export class BrandsService {
         shippingPolicy: s.shippingPolicy,
         returnPolicy: s.returnPolicy,
         returnDays: s.returnDays ?? 14,
+        pickup: s.pickup?.enabled ? { enabled: true, address: s.pickup.address, governorate: s.pickup.governorate, hours: s.pickup.hours, mapUrl: s.pickup.mapUrl || null } : { enabled: false },
         acceptsOrders: s.acceptsOrders,
       },
       ratingAvg: brand.ratingAvg,

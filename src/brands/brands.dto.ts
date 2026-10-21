@@ -104,6 +104,31 @@ export class ShippingZoneDto {
   fee: number;
 }
 
+export class PickupDto {
+  @IsBoolean()
+  enabled: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  address?: string;
+
+  @IsOptional()
+  @IsIn(GOVERNORATE_CODES)
+  governorate?: string | null;
+
+  /** e.g. "يومياً من 12 الظهر لـ 10 بالليل". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  hours?: string;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['https', 'http'], require_protocol: true })
+  @MaxLength(500)
+  mapUrl?: string;
+}
+
 export class BrandSettingsDto {
   @IsOptional()
   @IsArray()
@@ -150,6 +175,11 @@ export class BrandSettingsDto {
   @Min(0)
   @Max(30)
   returnDays?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PickupDto)
+  pickup?: PickupDto;
 
   @IsOptional()
   @IsBoolean()

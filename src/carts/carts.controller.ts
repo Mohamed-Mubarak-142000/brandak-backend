@@ -4,7 +4,7 @@ import { IsInt, IsMongoId, Max, Min } from 'class-validator';
 import { AuthUser, CurrentUser } from '@/common/decorators';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
 import { CustomerOnlyGuard } from '@/common/guards/customer-only.guard';
-import { CartsService, MAX_QTY_PER_LINE } from './carts.service';
+import { CartsService, MAX_WHOLESALE_QTY } from './carts.service';
 
 class AddCartItemDto {
   @IsMongoId()
@@ -15,14 +15,14 @@ class AddCartItemDto {
 
   @IsInt()
   @Min(1)
-  @Max(MAX_QTY_PER_LINE)
+  @Max(MAX_WHOLESALE_QTY)
   quantity: number;
 }
 
 class UpdateCartItemDto {
   @IsInt()
   @Min(1)
-  @Max(MAX_QTY_PER_LINE)
+  @Max(MAX_WHOLESALE_QTY)
   quantity: number;
 }
 
