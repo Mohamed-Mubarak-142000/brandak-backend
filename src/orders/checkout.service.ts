@@ -20,6 +20,7 @@ import { LoyaltyService } from '@/loyalty/loyalty.service';
 import { MAX_MARKUP, ResellersService } from '@/resellers/resellers.service';
 import { normalizeEgyptPhone } from '@/common/utils/text';
 import { round2 } from '@/commissions/commission-math';
+import { TrackingService } from '@/tracking/tracking.service';
 import { BrandBlock } from './brand-block.schema';
 import { needsConfirmation } from './customer-trust';
 import { Counter, Order } from './order.schema';
@@ -47,6 +48,7 @@ export class CheckoutService {
     @InjectModel(BrandBlock.name) private readonly blocks: Model<BrandBlock>,
     private readonly loyalty: LoyaltyService,
     private readonly resellers: ResellersService,
+    private readonly tracking: TrackingService,
   ) {}
 
   /** Read-only preview with the same rules as placing the order. */
@@ -267,6 +269,7 @@ export class CheckoutService {
         body: `طلب ${order.orderNumber} بقيمة ${order.grandTotal} ج.م`,
         data: { orderId: order.id },
       });
+      await this.ordersService.trackPurchase(order.toObject(), user);
     }
     return this.ordersService.toView(order.toObject());
   }

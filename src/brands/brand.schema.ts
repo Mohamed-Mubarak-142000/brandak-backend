@@ -114,6 +114,10 @@ export class Brand {
   @Prop({ type: Date, default: null })
   commissionDueSince: Date | null;
 
+  /** The store's own ad pixels; access tokens are write-only (never returned). */
+  @Prop({ type: Object, default: null })
+  tracking: { metaPixelId?: string; metaAccessToken?: string; tiktokPixelId?: string; tiktokAccessToken?: string } | null;
+
   /** Buyer-protection cases decided against the store. Too many suspend it. */
   @Prop({ default: 0 })
   protectionStrikes: number;

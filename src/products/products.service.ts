@@ -8,6 +8,7 @@ import { IMAGE_WIDTH, optimizedImage } from '@/common/utils/image';
 import { AdPlacement } from '@/ads/ad.schema';
 import { AdsService } from '@/ads/ads.service';
 import { AlertsService } from '@/alerts/alerts.service';
+import { InsightsService } from '@/insights/insights.service';
 import { PromotionsService } from '@/promotions/promotions.service';
 import { activeSalePercent, salePrice } from '@/promotions/price-math';
 import { escapeRegex, normalizeSearchText } from '@/common/utils/text';
@@ -40,6 +41,7 @@ export class ProductsService {
     private readonly promotions: PromotionsService,
     private readonly ads: AdsService,
     private readonly alerts: AlertsService,
+    private readonly insights: InsightsService,
   ) {}
 
   // ---------- Brand owner ----------
@@ -277,6 +279,10 @@ export class ProductsService {
       sort: { ...sorts[query.sort ?? 'newest'], _id: -1 },
       populate: 'brandId',
     });
+    // Demand signals for stores: what people search, and whose products answered.
+    if (query.q?.trim() && query.page === 1 && !query.brandId) {
+      await this.insights.recordSearch(query.q, page.total, page.items.map((p) => (p.brandId as unknown as { _id: Types.ObjectId })._id ?? p.brandId));
+    }
     return new PageResult(
       [...sponsored.map((s) => ({ ...this.toCard(s.p), sponsored: true, adId: s.adId })), ...page.items.map((p) => this.toCard(p))],
       page.page,

@@ -354,6 +354,8 @@ export class BrandsService {
       contact: brand.contact ?? {},
       socialLinks: brand.socialLinks ?? {},
       settings: brand.settings,
+      // Pixel ids only; access tokens are write-only.
+      tracking: { metaPixelId: brand.tracking?.metaPixelId ?? '', tiktokPixelId: brand.tracking?.tiktokPixelId ?? '' },
       subscriptionEndsAt: brand.subscriptionEndsAt,
       isVisible: this.isVisible(brand),
       ratingAvg: brand.ratingAvg,

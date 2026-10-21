@@ -25,6 +25,7 @@ import { NotificationsService } from '@/notifications/notifications.service';
 import { AlertsService } from '@/alerts/alerts.service';
 import { LoyaltyService } from '@/loyalty/loyalty.service';
 import { ResellersService } from '@/resellers/resellers.service';
+import { TrackingService } from '@/tracking/tracking.service';
 import { Product } from '@/products/product.schema';
 import { BrandBlock } from './brand-block.schema';
 import { Order } from './order.schema';
@@ -60,6 +61,7 @@ export class OrdersService {
     private readonly alerts: AlertsService,
     private readonly loyalty: LoyaltyService,
     private readonly resellers: ResellersService,
+    private readonly tracking: TrackingService,
   ) {}
 
   // ---------- Customer ----------
@@ -153,8 +155,19 @@ export class OrdersService {
         body: `طلب ${o.orderNumber} بقيمة ${o.grandTotal} ج.م`,
         data: { orderId: o._id.toString() },
       });
+      await this.trackPurchase(o, await this.users.getById(userId).catch(() => null));
     }
     return confirmed;
+  }
+
+  /** Tells the store's ad pixels about a real (confirmed) order. */
+  async trackPurchase(o: Lean<Order>, user: { _id: Types.ObjectId; email: string; phone: string } | null) {
+    await this.tracking.event(o.brandId, 'Purchase', {
+      value: o.subtotal - (o.discountTotal ?? 0),
+      contents: o.items.map((i) => ({ id: i.productId.toString(), quantity: i.quantity, price: i.unitPrice })),
+      user: user && { id: user._id.toString(), email: user.email, phone: user.phone },
+      eventId: `order-${o._id.toString()}`,
+    });
   }
 
   /** Sends a fresh confirmation code (subject to the usual one-minute cooldown). */

@@ -12,6 +12,7 @@ import { unitPriceFor } from '@/promotions/price-math';
 import { CONTACT_CHANNEL, ContactChannel } from '@/auth/contact-channel';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { UsersService } from '@/users/users.service';
+import { TrackingService } from '@/tracking/tracking.service';
 
 export const MAX_QTY_PER_LINE = 50;
 /** Wholesale products sell by the dozen or carton. */
@@ -48,6 +49,7 @@ export class CartsService {
     private readonly notifications: NotificationsService,
     private readonly users: UsersService,
     @Inject(CONTACT_CHANNEL) private readonly mail: ContactChannel,
+    private readonly tracking: TrackingService,
   ) {}
 
   /**
@@ -148,6 +150,11 @@ export class CartsService {
       cart.items.push({ productId: product._id, variantId: variant._id, quantity } as CartItem);
     }
     await cart.save();
+    const user = await this.users.getById(userId).catch(() => null);
+    await this.tracking.event(brand._id, 'AddToCart', {
+      contents: [{ id: product.id, quantity, price: unitPriceFor(product, variant, nextQty) }],
+      user: user && { id: userId, email: user.email, phone: user.phone },
+    });
     return this.view(userId, brandId);
   }
 

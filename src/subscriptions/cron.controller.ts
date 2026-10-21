@@ -9,6 +9,7 @@ import { CartsService } from '@/carts/carts.service';
 import { OrdersService } from '@/orders/orders.service';
 import { SupportService } from '@/support/support.service';
 import { AlertsService } from '@/alerts/alerts.service';
+import { InsightsService } from '@/insights/insights.service';
 import { SubscriptionJobs } from './subscription-jobs';
 
 /**
@@ -44,5 +45,7 @@ export class CronController {
     await this.moduleRef.get(SupportService, { strict: false }).escalateOverdue();
     // Sales that started on schedule: price-drop alerts.
     await this.moduleRef.get(AlertsService, { strict: false }).checkScheduled();
+    // Sundays: each store's weekly report by email.
+    await this.moduleRef.get(InsightsService, { strict: false }).sendWeekly();
   }
 }

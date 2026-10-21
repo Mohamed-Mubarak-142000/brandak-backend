@@ -32,6 +32,9 @@ import { AiModule } from './ai/ai.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { ResellersModule } from './resellers/resellers.module';
+import { TrackingModule } from './tracking/tracking.module';
+import { InsightsModule } from './insights/insights.module';
+import { StorefrontModule } from './storefront/storefront.controller';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -95,6 +98,9 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     AlertsModule,
     LoyaltyModule,
     ResellersModule,
+    TrackingModule,
+    InsightsModule,
+    StorefrontModule,
     ProductsModule,
     AddressesModule,
     WishlistsModule,

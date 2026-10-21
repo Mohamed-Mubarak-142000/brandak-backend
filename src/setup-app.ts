@@ -10,7 +10,8 @@ export function setupApp(app: INestApplication, corsOrigins: string[] = []) {
   express.set('trust proxy', 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.enableCors({ origin: corsOrigins.length ? corsOrigins : false, credentials: false });
-  app.setGlobalPrefix('api/v1', { exclude: ['uploads/public/(.*)'] });
+  // Store web pages (/s/:slug) live at the root, for short bio links.
+  app.setGlobalPrefix('api/v1', { exclude: ['uploads/public/(.*)', 's/(.*)'] });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
