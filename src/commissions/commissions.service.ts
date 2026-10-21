@@ -102,19 +102,31 @@ export class CommissionsService {
       subtotal: number;
       discountTotal?: number;
       coupon?: { code: string; discount: number; fundedBy: 'BRAND' | 'PLATFORM' };
+      points?: { discount: number } | null;
+      resale?: { margin: number } | null;
     },
     session: ClientSession,
   ) {
     const { commissionRate } = await this.terms();
-    // A Fatrina coupon is the platform's discount: the store is commissioned on the full price
-    // and credited the discount it gave on our behalf.
-    const platformFunded = order.coupon?.fundedBy === 'PLATFORM';
-    const c = commissionFor({ subtotal: order.subtotal, discountTotal: platformFunded ? 0 : order.discountTotal }, commissionRate);
-    if (platformFunded && order.coupon!.discount > 0) {
-      await this.ledger.create(
-        [{ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: -order.coupon!.discount, orderId: order._id, orderNumber: order.orderNumber, note: `خصم كوبون فاترينة ${order.coupon!.code}` }],
-        { session },
-      );
+    // Fatrina coupons and points are the platform's discount: the store is commissioned on the
+    // full price and credited what it gave on our behalf. A reseller's margin isn't the store's
+    // sale: no commission on it, and the store owes it to Fatrina, which pays the reseller.
+    const brandDiscount = order.coupon?.fundedBy === 'BRAND' ? order.coupon.discount : 0;
+    const margin = order.resale?.margin ?? 0;
+    const c = commissionFor({ subtotal: order.subtotal - margin, discountTotal: brandDiscount }, commissionRate);
+    const extra: Partial<LedgerEntry>[] = [];
+    if (order.coupon?.fundedBy === 'PLATFORM' && order.coupon.discount > 0) {
+      extra.push({ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: -order.coupon.discount, orderId: order._id, orderNumber: order.orderNumber, note: `خصم كوبون فاترينة ${order.coupon.code}` });
+    }
+    if (order.points?.discount) {
+      extra.push({ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: -order.points.discount, orderId: order._id, orderNumber: order.orderNumber, note: 'خصم نقاط فاترينة' });
+    }
+    if (margin > 0) {
+      extra.push({ brandId: order.brandId, type: LedgerType.RESELLER_MARGIN, amount: margin, orderId: order._id, orderNumber: order.orderNumber, note: 'ربح المسوّق (اتحصّل مع الطلب)' });
+    }
+    if (extra.length) await this.ledger.create(extra, { session, ordered: true });
+    if (margin > 0 && c.amount <= 0) {
+      await this.brands.updateOne({ _id: order.brandId, commissionDueSince: null }, { $set: { commissionDueSince: new Date() } }, { session });
     }
     if (c.amount <= 0) return c;
     await this.ledger.create(
@@ -138,6 +150,8 @@ export class CommissionsService {
       subtotal: number;
       commission?: { amount: number };
       coupon?: { code: string; discount: number; fundedBy: 'BRAND' | 'PLATFORM' };
+      points?: { discount: number } | null;
+      resale?: { margin: number } | null;
     },
     itemsValue: number,
     session: ClientSession,
@@ -154,8 +168,17 @@ export class CommissionsService {
         entries.push({ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: couponBack, orderId: order._id, orderNumber: order.orderNumber, note: `استرجاع خصم كوبون فاترينة ${order.coupon.code} على المرتجع` });
       }
     }
+    const pointsBack = round2((order.points?.discount ?? 0) * share);
+    if (pointsBack > 0) {
+      entries.push({ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: pointsBack, orderId: order._id, orderNumber: order.orderNumber, note: 'استرجاع خصم نقاط فاترينة على المرتجع' });
+    }
+    // The reseller's margin on returned items is no longer owed.
+    const marginBack = round2((order.resale?.margin ?? 0) * share);
+    if (marginBack > 0) {
+      entries.push({ brandId: order.brandId, type: LedgerType.RESELLER_MARGIN, amount: -marginBack, orderId: order._id, orderNumber: order.orderNumber, note: 'ربح المسوّق على المرتجع' });
+    }
     if (entries.length) await this.ledger.create(entries, { session, ordered: true });
-    return reversed;
+    return { reversed, marginBack };
   }
 
   async balance(brandId: string | Types.ObjectId) {

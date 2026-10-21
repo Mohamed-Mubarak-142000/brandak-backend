@@ -15,11 +15,54 @@ import {
   IsUrl,
   ValidateIf,
   ValidateNested,
+  ArrayMaxSize,
+  IsArray,
+  Max,
+  Min,
 } from 'class-validator';
 import { OrderPaymentMethod, OrderStatus } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 
+export class ResalePriceDto {
+  @IsMongoId() variantId: string;
+
+  /** The reseller's selling price per piece (at least the store's price). */
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
+  @Max(1_000_000)
+  price: number;
+}
+
+/** A reseller ordering for their own customer, at their own prices. */
+export class ResaleDto {
+  @IsString() @Length(2, 80) customerName: string;
+  @IsString() @Length(8, 20) customerPhone: string;
+
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ResalePriceDto)
+  prices: ResalePriceDto[];
+}
+
+export class GiftDto {
+  /** Printed on the gift card. */
+  @IsOptional() @IsString() @MaxLength(300) message?: string;
+  /** Leave prices off the parcel (no priced invoice inside). */
+  @IsOptional() @IsBoolean() hidePrices?: boolean;
+}
+
 export class QuoteDto {
+  /** Spend Fatrina points on this order (as many as allowed). */
+  @IsOptional()
+  @IsBoolean()
+  usePoints?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ResaleDto)
+  resale?: ResaleDto;
+
   /** PICKUP collects the order from the store (when it offers pickup); no address needed. */
   @IsOptional()
   @IsIn(['DELIVERY', 'PICKUP'])
@@ -51,6 +94,11 @@ export class ShipmentDto {
 }
 
 export class PlaceOrderDto extends QuoteDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GiftDto)
+  gift?: GiftDto;
+
   @IsOptional()
   @IsEnum(OrderPaymentMethod)
   paymentMethod?: OrderPaymentMethod;

@@ -23,6 +23,8 @@ import { UsersService } from '@/users/users.service';
 import { BrandMembersService } from '@/brands/brand-members.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { AlertsService } from '@/alerts/alerts.service';
+import { LoyaltyService } from '@/loyalty/loyalty.service';
+import { ResellersService } from '@/resellers/resellers.service';
 import { Product } from '@/products/product.schema';
 import { BrandBlock } from './brand-block.schema';
 import { Order } from './order.schema';
@@ -56,6 +58,8 @@ export class OrdersService {
     private readonly users: UsersService,
     private readonly promotions: PromotionsService,
     private readonly alerts: AlertsService,
+    private readonly loyalty: LoyaltyService,
+    private readonly resellers: ResellersService,
   ) {}
 
   // ---------- Customer ----------
@@ -313,8 +317,15 @@ export class OrdersService {
       if (to === OrderStatus.DELIVERED) {
         const commission = await this.commissions.recordForOrder(result, session);
         result.commission = commission;
-        await this.orders.updateOne({ _id: result._id }, { $set: { commission } }, { session });
+        // Points go to the buyer (a reseller's customers aren't Fatrina accounts).
+        const earned = result.resale ? 0 : await this.loyalty.earn(result, session);
+        const points = result.points || earned ? { used: result.points?.used ?? 0, discount: result.points?.discount ?? 0, earned } : null;
+        result.points = points;
+        await this.orders.updateOne({ _id: result._id }, { $set: { commission, points } }, { session });
       }
+      if (order.resale) await this.resellers.onOrderStatus(order._id, to, session);
+      // Points spent on an order that won't be delivered come back.
+      if (to === OrderStatus.CANCELLED || to === OrderStatus.REFUSED) await this.loyalty.refund(order, session);
       // A coupon used on an order that won't be delivered can be used again.
       if ((to === OrderStatus.CANCELLED || to === OrderStatus.REFUSED) && order.coupon) await this.promotions.release(order._id, session);
       if (restocks(from, to)) {
@@ -344,6 +355,7 @@ export class OrdersService {
     });
 
     await this.notifyStatus(updated.toObject(), by.actor);
+    if (to === OrderStatus.DELIVERED && updated.points?.earned) await this.loyalty.notifyEarned(updated.userId, updated.points.earned, updated.orderNumber);
     // Stock put back by a cancellation can be someone's "back in stock".
     if (to === OrderStatus.CANCELLED || to === OrderStatus.REFUSED) for (const id of new Set(updated.items.map((i) => i.productId.toString()))) await this.alerts.check(id);
     return this.toView(updated.toObject(), by.actor);
@@ -422,6 +434,9 @@ export class OrdersService {
       cancelReason: order.cancelReason ?? null,
       deliveredAt: order.deliveredAt ?? null,
       coupon: order.coupon ? { code: order.coupon.code, discount: order.coupon.discount, fundedBy: order.coupon.fundedBy } : null,
+      points: order.points ?? null,
+      gift: order.gift ?? null,
+      resale: order.resale ? { margin: order.resale.margin } : null,
       shipment: order.shipment ?? null,
       commission: actor === 'CUSTOMER' ? undefined : (order.commission ?? null),
       history: order.statusHistory.map((h) => ({ status: h.status, at: h.at, actor: h.actor, note: h.note ?? null })),

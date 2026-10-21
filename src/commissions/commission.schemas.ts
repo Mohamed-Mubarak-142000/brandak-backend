@@ -33,6 +33,8 @@ export enum LedgerType {
   /** A settlement the admin approved: the store paid. */
   PAYMENT = 'PAYMENT',
   ADJUSTMENT = 'ADJUSTMENT',
+  /** A reseller's margin the store collected with the order; Fatrina pays it to the reseller. */
+  RESELLER_MARGIN = 'RESELLER_MARGIN',
 }
 
 /** Running account between a store and the platform. Positive amounts are owed by the store. */

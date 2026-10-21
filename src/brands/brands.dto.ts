@@ -183,6 +183,10 @@ export class BrandSettingsDto {
 
   @IsOptional()
   @IsBoolean()
+  allowResellers?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   acceptsOrders?: boolean;
 }
 

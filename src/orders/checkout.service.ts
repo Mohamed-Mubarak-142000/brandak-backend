@@ -16,6 +16,10 @@ import { unitPriceFor } from '@/promotions/price-math';
 import { PromotionsService } from '@/promotions/promotions.service';
 import { CommissionsService } from '@/commissions/commissions.service';
 import { UsersService } from '@/users/users.service';
+import { LoyaltyService } from '@/loyalty/loyalty.service';
+import { MAX_MARKUP, ResellersService } from '@/resellers/resellers.service';
+import { normalizeEgyptPhone } from '@/common/utils/text';
+import { round2 } from '@/commissions/commission-math';
 import { BrandBlock } from './brand-block.schema';
 import { needsConfirmation } from './customer-trust';
 import { Counter, Order } from './order.schema';
@@ -41,6 +45,8 @@ export class CheckoutService {
     private readonly otp: OtpService,
     private readonly promotions: PromotionsService,
     @InjectModel(BrandBlock.name) private readonly blocks: Model<BrandBlock>,
+    private readonly loyalty: LoyaltyService,
+    private readonly resellers: ResellersService,
   ) {}
 
   /** Read-only preview with the same rules as placing the order. */
@@ -52,15 +58,65 @@ export class CheckoutService {
     const lines = await this.carts.priceLines(brandId, cart.items);
     const issues = lines.filter((l) => l.issue);
     if (issues.length) throw this.cartIssues(issues.map((l) => ({ field: l.itemId, reason: l.issue! })));
+    if (dto.resale) {
+      await this.assertResale(userId, brand, dto);
+      const priced = this.resalePrices(lines, dto.resale.prices);
+      return {
+        items: priced.items,
+        ...computeQuote(priced.items, brand.settings, where.governorate, 0),
+        fulfillment: where.fulfillment,
+        coupon: null,
+        points: null,
+        resale: { margin: priced.margin, storeSubtotal: priced.storeSubtotal },
+        paymentMethods: [OrderPaymentMethod.COD],
+      };
+    }
     const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
     const coupon = dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, subtotal) : null;
+    const couponDiscount = Math.min(coupon?.discount ?? 0, subtotal);
+    const balance = await this.loyalty.balance(userId);
+    const usable = this.loyalty.usable(balance, subtotal - couponDiscount);
+    const points = dto.usePoints ? usable : { points: 0, discount: 0 };
     return {
       items: lines,
-      ...computeQuote(lines, brand.settings, where.governorate, coupon?.discount ?? 0),
+      ...computeQuote(lines, brand.settings, where.governorate, couponDiscount + points.discount),
       fulfillment: where.fulfillment,
-      coupon: coupon && { code: coupon.code, discount: coupon.discount },
+      coupon: coupon && { code: coupon.code, discount: couponDiscount },
+      // What the customer could use, and what is applied now.
+      points: { balance, usable: usable.points, usableDiscount: usable.discount, used: points.points, discount: points.discount },
       paymentMethods: [OrderPaymentMethod.COD],
     };
+  }
+
+  /** Reseller orders: the reseller must be active and the store must allow resellers. */
+  private async assertResale(userId: string, brand: BrandDocument, dto: QuoteDto) {
+    await this.resellers.assertActive(userId);
+    if (!brand.settings.allowResellers) throw AppError.unprocessable('RESALE_NOT_ALLOWED', 'This store does not work with resellers');
+    if (dto.fulfillment === 'PICKUP') throw AppError.unprocessable('RESALE_NO_PICKUP', 'Reseller orders are delivered to the customer');
+    if (dto.couponCode || dto.usePoints) throw AppError.unprocessable('RESALE_NO_DISCOUNTS', 'Coupons and points are not used on reseller orders');
+  }
+
+  /**
+   * Applies the reseller's prices: each at least the store's price and at most twice it.
+   * Returns lines at the selling price, with the store's price kept beside it.
+   */
+  private resalePrices<T extends { variantId: string | Types.ObjectId; unitPrice: number; quantity: number }>(lines: T[], prices: { variantId: string; price: number }[]) {
+    const wanted = new Map(prices.map((p) => [p.variantId, p.price]));
+    let margin = 0;
+    let storeSubtotal = 0;
+    const items = lines.map((l) => {
+      const store = l.unitPrice;
+      const sell = wanted.get(l.variantId.toString()) ?? store;
+      if (sell < store || sell > round2(store * (1 + MAX_MARKUP))) {
+        throw AppError.unprocessable('RESALE_PRICE_INVALID', `Selling price must be between ${store} and ${round2(store * (1 + MAX_MARKUP))} EGP`, [
+          { field: l.variantId.toString(), reason: `range_${store}_${round2(store * (1 + MAX_MARKUP))}` },
+        ]);
+      }
+      margin += (sell - store) * l.quantity;
+      storeSubtotal += store * l.quantity;
+      return { ...l, unitPrice: sell, storeUnitPrice: store, lineTotal: round2(sell * l.quantity) };
+    });
+    return { items, margin: round2(margin), storeSubtotal: round2(storeSubtotal) };
   }
 
   async placeOrder(userId: string, brandId: string, dto: PlaceOrderDto, idempotencyKey?: string) {
@@ -75,6 +131,7 @@ export class CheckoutService {
     if (await this.blocks.exists({ brandId: brand._id, userId: new Types.ObjectId(userId) })) {
       throw AppError.forbidden('ORDER_NOT_ALLOWED', 'This store cannot take your order');
     }
+    if (dto.resale) await this.assertResale(userId, brand, dto);
     // New customers, and those who refuse parcels, confirm the order with an email code first.
     const confirm = needsConfirmation((await this.ordersService.trustFor(userId)).level);
     const firstStatus = confirm ? OrderStatus.AWAITING_CONFIRMATION : OrderStatus.PENDING;
@@ -133,9 +190,13 @@ export class CheckoutService {
         // Throwing aborts the transaction, which also rolls back the stock already decremented.
         if (problems.length) throw this.cartIssues(problems);
 
-        const itemsTotal = items.reduce((s, i) => s + i.lineTotal, 0);
-        const coupon = dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, itemsTotal) : null;
-        const totals = computeQuote(items, brand.settings, where.governorate, coupon?.discount ?? 0);
+        const priced = dto.resale ? this.resalePrices(items, dto.resale.prices) : null;
+        const lines = priced ? priced.items : items;
+        const itemsTotal = lines.reduce((s, i) => s + i.lineTotal, 0);
+        const coupon = !priced && dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, itemsTotal) : null;
+        const couponDiscount = Math.min(coupon?.discount ?? 0, itemsTotal);
+        const points = !priced && dto.usePoints ? this.loyalty.usable(await this.loyalty.balance(userId), itemsTotal - couponDiscount) : { points: 0, discount: 0 };
+        const totals = computeQuote(lines, brand.settings, where.governorate, couponDiscount + points.discount);
         if (dto.expectedTotal !== undefined && Math.abs(dto.expectedTotal - totals.grandTotal) > 0.009) {
           throw new AppError('PRICE_CHANGED', 'Prices or shipping changed. Please review the new total.', HttpStatus.CONFLICT, [
             { field: 'grandTotal', reason: String(totals.grandTotal) },
@@ -155,15 +216,20 @@ export class CheckoutService {
               userId: user._id,
               brandId: brand._id,
               brandSnapshot: { name: brand.name, slug: brand.slug, phone: brand.contact?.phone },
-              customer: { name: address?.recipientName || user.name, phone: address?.phone || user.phone },
-              items,
+              customer: dto.resale
+                ? { name: dto.resale.customerName.trim(), phone: normalizeEgyptPhone(dto.resale.customerPhone) ?? dto.resale.customerPhone }
+                : { name: address?.recipientName || user.name, phone: address?.phone || user.phone },
+              items: lines,
               addressSnapshot: address ? addressView(address) : null,
               fulfillment: where.fulfillment,
               pickup: where.pickup,
               subtotal: totals.subtotal,
               shippingFee: totals.shippingFee,
               discountTotal: totals.discountTotal,
-              coupon: coupon ? { couponId: coupon.couponId, code: coupon.code, discount: totals.discountTotal, fundedBy: coupon.fundedBy } : undefined,
+              coupon: coupon ? { couponId: coupon.couponId, code: coupon.code, discount: couponDiscount, fundedBy: coupon.fundedBy } : undefined,
+              points: points.points ? { used: points.points, discount: points.discount, earned: 0 } : null,
+              gift: dto.gift ? { message: dto.gift.message?.trim() ?? '', hidePrices: dto.gift.hidePrices ?? true } : null,
+              resale: priced ? { resellerId: user._id, margin: priced.margin } : null,
               grandTotal: totals.grandTotal,
               paymentMethod: dto.paymentMethod ?? OrderPaymentMethod.COD,
               status: firstStatus,
@@ -174,7 +240,9 @@ export class CheckoutService {
           ],
           { session },
         );
-        if (coupon) await this.promotions.redeem({ ...coupon, discount: totals.discountTotal }, user._id, created._id, session);
+        if (coupon) await this.promotions.redeem({ ...coupon, discount: couponDiscount }, user._id, created._id, session);
+        if (points.points) await this.loyalty.redeem(user._id, points.points, created, session);
+        if (priced) await this.resellers.recordEarning(created, priced.margin, session);
         await this.carts.deleteById(cart._id, session);
         return created;
       });

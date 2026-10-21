@@ -180,6 +180,11 @@ export class BrandProductsQueryDto extends PageQueryDto {
 
 export class ProductsQueryDto extends PageQueryDto {
   @IsOptional() @IsString() @MaxLength(100) q?: string;
+  /** Only stores that let resellers sell their products. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  resellable?: boolean;
   @IsOptional() @IsMongoId() categoryId?: string;
   /** Several categories at once (comma-separated ids); products in any of them match. */
   @IsOptional()

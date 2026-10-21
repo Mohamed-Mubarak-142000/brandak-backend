@@ -30,6 +30,8 @@ import { SupportModule } from './support/support.module';
 import { AdsModule } from './ads/ads.module';
 import { AiModule } from './ai/ai.module';
 import { AlertsModule } from './alerts/alerts.module';
+import { LoyaltyModule } from './loyalty/loyalty.module';
+import { ResellersModule } from './resellers/resellers.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -91,6 +93,8 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     AdsModule,
     AiModule,
     AlertsModule,
+    LoyaltyModule,
+    ResellersModule,
     ProductsModule,
     AddressesModule,
     WishlistsModule,

@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, Types } from 'mongoose';
 import { AlertsService } from '@/alerts/alerts.service';
+import { LoyaltyService } from '@/loyalty/loyalty.service';
+import { ResellersService } from '@/resellers/resellers.service';
 import { AuditLogsService } from '@/audit-logs/audit-logs.service';
 import { Brand } from '@/brands/brand.schema';
 import { BrandMembersService } from '@/brands/brand-members.service';
@@ -63,6 +65,8 @@ export class ReturnsService {
     private readonly notifications: NotificationsService,
     private readonly audit: AuditLogsService,
     private readonly alerts: AlertsService,
+    private readonly loyalty: LoyaltyService,
+    private readonly resellers: ResellersService,
   ) {}
 
   /** What the customer can still return from an order, and until when. */
@@ -197,7 +201,10 @@ export class ReturnsService {
         const order = await this.orders.findById(r.orderId).session(session).lean();
         if (order) {
           const itemsValue = r.items.reduce((s, i) => s + i.unitPrice * i.quantity, 0);
-          set.commissionReversed = await this.commissions.reverseForReturn(order, itemsValue, session);
+          const back = await this.commissions.reverseForReturn(order, itemsValue, session);
+          set.commissionReversed = back.reversed;
+          if (back.marginBack > 0) await this.resellers.reverseForReturn(order._id, back.marginBack, session);
+          await this.loyalty.reverseForReturn(order, itemsValue, session);
         }
       }
       const res = await this.returns.findOneAndUpdate(

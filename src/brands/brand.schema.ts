@@ -55,6 +55,10 @@ export class BrandSettings {
   @Prop({ type: Object, default: () => ({ enabled: false, address: '', governorate: null, hours: '', mapUrl: '' }) })
   pickup: { enabled: boolean; address: string; governorate: string | null; hours: string; mapUrl: string };
 
+  /** Resellers may sell this store's products at their own (higher) price. */
+  @Prop({ default: false })
+  allowResellers: boolean;
+
   /** Lets an owner pause new orders (e.g. on holiday) without hiding the store. */
   @Prop({ default: true })
   acceptsOrders: boolean;

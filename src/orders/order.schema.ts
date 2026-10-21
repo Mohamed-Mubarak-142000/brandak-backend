@@ -13,6 +13,8 @@ export class OrderItem {
   @Prop() color?: string;
   @Prop() sku?: string;
   @Prop({ required: true }) unitPrice: number;
+  /** Resale orders: the store's own price (unitPrice is the reseller's). */
+  @Prop() storeUnitPrice?: number;
   @Prop({ required: true }) quantity: number;
   @Prop({ required: true }) lineTotal: number;
 }
@@ -62,6 +64,18 @@ export class Order {
   /** Coupon used on the order; fundedBy says who pays for the discount. */
   @Prop({ type: Object })
   coupon?: { couponId: Types.ObjectId; code: string; discount: number; fundedBy: 'BRAND' | 'PLATFORM' };
+
+  /** Fatrina points spent on (and later earned from) this order. Fatrina pays the discount. */
+  @Prop({ type: Object, default: null })
+  points: { used: number; discount: number; earned: number } | null;
+
+  /** Sent as a gift: a card message, and prices kept off the parcel. */
+  @Prop({ type: Object, default: null })
+  gift: { message: string; hidePrices: boolean } | null;
+
+  /** Placed by a reseller for their customer: margin = what the reseller earns. */
+  @Prop({ type: Object, default: null })
+  resale: { resellerId: Types.ObjectId; margin: number } | null;
 
   /** Filled by the store when it ships: carrier, tracking number and (optionally) a tracking link. */
   @Prop({ type: Object })

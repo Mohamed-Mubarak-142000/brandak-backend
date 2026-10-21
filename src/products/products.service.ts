@@ -235,7 +235,9 @@ export class ProductsService {
   async search(query: ProductsQueryDto) {
     const filter: FilterQuery<Product> = {
       status: ProductStatus.ACTIVE,
-      brandId: { $in: await this.brands.visibleBrandIds(query.brandId ? { _id: query.brandId } : {}) },
+      brandId: {
+        $in: await this.brands.visibleBrandIds({ ...(query.brandId ? { _id: query.brandId } : {}), ...(query.resellable ? { 'settings.allowResellers': true } : {}) }),
+      },
     };
     const categoryIds = [...(query.categoryId ? [query.categoryId] : []), ...(query.categoryIds ?? [])];
     let inCategories: Types.ObjectId[] = [];

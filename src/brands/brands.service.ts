@@ -387,6 +387,7 @@ export class BrandsService {
         returnDays: s.returnDays ?? 14,
         pickup: s.pickup?.enabled ? { enabled: true, address: s.pickup.address, governorate: s.pickup.governorate, hours: s.pickup.hours, mapUrl: s.pickup.mapUrl || null } : { enabled: false },
         acceptsOrders: s.acceptsOrders,
+        allowResellers: !!s.allowResellers,
       },
       ratingAvg: brand.ratingAvg,
       ratingCount: brand.ratingCount,
