@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
 import { Public } from '@/common/decorators';
 import { Env } from '@/config/env';
+import { CartsService } from '@/carts/carts.service';
 import { OrdersService } from '@/orders/orders.service';
 import { SubscriptionJobs } from './subscription-jobs';
 
@@ -35,5 +36,7 @@ export class CronController {
     await this.jobs.run();
     // Orders nobody confirmed within 24 hours are cancelled and their stock released.
     await this.moduleRef.get(OrdersService, { strict: false }).expireUnconfirmed();
+    // Customers who left a cart 1–3 days ago get one reminder per cart change.
+    await this.moduleRef.get(CartsService, { strict: false }).remindAbandoned();
   }
 }

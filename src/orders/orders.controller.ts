@@ -25,6 +25,7 @@ import {
   OrdersQueryDto,
   PlaceOrderDto,
   QuoteDto,
+  ShipmentDto,
   UpdateOrderStatusDto,
 } from './orders.dto';
 import { OrdersService } from './orders.service';
@@ -114,7 +115,12 @@ export class BrandOrdersController {
     @Param('id', ParseObjectIdPipe) id: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    return this.orders.updateByBrand(user.userId, brand.brandId, id, dto.status, dto.note);
+    return this.orders.updateByBrand(user.userId, brand.brandId, id, dto.status, dto.note, dto.shipment);
+  }
+
+  @Patch('orders/:id/shipment')
+  shipment(@CurrentBrand() brand: BrandContext, @Param('id', ParseObjectIdPipe) id: string, @Body() dto: ShipmentDto) {
+    return this.orders.setShipment(brand.brandId, id, dto);
   }
 
   @Get('customers')

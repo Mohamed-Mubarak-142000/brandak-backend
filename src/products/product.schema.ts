@@ -62,6 +62,10 @@ export class Product {
   @Prop({ type: Number, default: null })
   compareAtPrice: number | null;
 
+  /** A time-limited percent off every variant; optionally part of a season (campaign). */
+  @Prop({ type: Object, default: null })
+  sale: { percent: number; startsAt: Date; endsAt: Date; campaignId?: Types.ObjectId | null } | null;
+
   @Prop({ type: [VariantSchema], default: [] })
   variants: Variant[];
 

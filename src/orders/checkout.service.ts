@@ -12,6 +12,8 @@ import { CartsService } from '@/carts/carts.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Product } from '@/products/product.schema';
 import { OtpService } from '@/auth/otp.service';
+import { unitPriceNow } from '@/promotions/price-math';
+import { PromotionsService } from '@/promotions/promotions.service';
 import { CommissionsService } from '@/commissions/commissions.service';
 import { UsersService } from '@/users/users.service';
 import { BrandBlock } from './brand-block.schema';
@@ -37,6 +39,7 @@ export class CheckoutService {
     private readonly notifications: NotificationsService,
     private readonly commissions: CommissionsService,
     private readonly otp: OtpService,
+    private readonly promotions: PromotionsService,
     @InjectModel(BrandBlock.name) private readonly blocks: Model<BrandBlock>,
   ) {}
 
@@ -49,9 +52,12 @@ export class CheckoutService {
     const lines = await this.carts.priceLines(brandId, cart.items);
     const issues = lines.filter((l) => l.issue);
     if (issues.length) throw this.cartIssues(issues.map((l) => ({ field: l.itemId, reason: l.issue! })));
+    const subtotal = lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
+    const coupon = dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, subtotal) : null;
     return {
       items: lines,
-      ...computeQuote(lines, brand.settings, address.governorate),
+      ...computeQuote(lines, brand.settings, address.governorate, coupon?.discount ?? 0),
+      coupon: coupon && { code: coupon.code, discount: coupon.discount },
       paymentMethods: [OrderPaymentMethod.COD],
     };
   }
@@ -102,7 +108,7 @@ export class CheckoutService {
             problems.push({ field: line._id.toString(), reason: 'INSUFFICIENT_STOCK' });
             continue;
           }
-          const unitPrice = variant.price ?? product.price;
+          const unitPrice = unitPriceNow(product, variant);
           items.push({
             productId: product._id,
             variantId: variant._id,
@@ -119,7 +125,9 @@ export class CheckoutService {
         // Throwing aborts the transaction, which also rolls back the stock already decremented.
         if (problems.length) throw this.cartIssues(problems);
 
-        const totals = computeQuote(items, brand.settings, address.governorate);
+        const itemsTotal = items.reduce((s, i) => s + i.lineTotal, 0);
+        const coupon = dto.couponCode ? await this.promotions.resolve(dto.couponCode, brand._id, userId, itemsTotal) : null;
+        const totals = computeQuote(items, brand.settings, address.governorate, coupon?.discount ?? 0);
         if (dto.expectedTotal !== undefined && Math.abs(dto.expectedTotal - totals.grandTotal) > 0.009) {
           throw new AppError('PRICE_CHANGED', 'Prices or shipping changed. Please review the new total.', HttpStatus.CONFLICT, [
             { field: 'grandTotal', reason: String(totals.grandTotal) },
@@ -145,6 +153,7 @@ export class CheckoutService {
               subtotal: totals.subtotal,
               shippingFee: totals.shippingFee,
               discountTotal: totals.discountTotal,
+              coupon: coupon ? { couponId: coupon.couponId, code: coupon.code, discount: totals.discountTotal, fundedBy: coupon.fundedBy } : undefined,
               grandTotal: totals.grandTotal,
               paymentMethod: dto.paymentMethod ?? OrderPaymentMethod.COD,
               status: firstStatus,
@@ -155,6 +164,7 @@ export class CheckoutService {
           ],
           { session },
         );
+        if (coupon) await this.promotions.redeem({ ...coupon, discount: totals.discountTotal }, user._id, created._id, session);
         await this.carts.deleteById(cart._id, session);
         return created;
       });

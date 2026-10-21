@@ -51,6 +51,14 @@ export class Order {
   @Prop({ type: Object, required: true })
   addressSnapshot: Record<string, unknown>;
 
+  /** Coupon used on the order; fundedBy says who pays for the discount. */
+  @Prop({ type: Object })
+  coupon?: { couponId: Types.ObjectId; code: string; discount: number; fundedBy: 'BRAND' | 'PLATFORM' };
+
+  /** Filled by the store when it ships: carrier, tracking number and (optionally) a tracking link. */
+  @Prop({ type: Object })
+  shipment?: { carrier: string; trackingNumber: string; trackingUrl?: string | null; shippedAt: Date };
+
   /** Platform commission charged when the order was delivered. */
   @Prop({ type: Object })
   commission?: { rate: number; base: number; amount: number };

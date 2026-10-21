@@ -1,6 +1,7 @@
 import { getModelToken } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Brand } from '@/brands/brand.schema';
+import { CartsService } from '@/carts/carts.service';
 import { OrdersService } from '@/orders/orders.service';
 import { auth, createTestApp, loginAdmin, registerUser, TestContext, upload } from './helpers';
 
@@ -785,6 +786,155 @@ describe('Fatrina marketplace (e2e)', () => {
       const list = await ctx.http().get(api('/admin/reports?limit=100')).set(auth(admin)).expect(200);
       expect(list.body.data.map((r: any) => r._id)).not.toContain(id);
       await ctx.http().post(api(`/admin/reports/${id}/restore`)).set(auth(admin)).expect(200);
+    });
+  });
+
+  // ---------------------------------------------------------------- Promotions
+
+  describe('coupons, sales, seasons, tracking and cart reminders', () => {
+    let store: Awaited<ReturnType<typeof onboardBrand>>;
+    let product: any;
+
+    beforeAll(async () => {
+      store = await onboardBrand('Promo Store');
+      product = (await createProduct(store.owner.token, { title: 'جاكيت جينز', price: 500, variants: [{ size: 'M', stock: 20 }] })).body.data;
+    });
+
+    /** A fresh customer with an address in Cairo. */
+    const newCustomer = async (name: string) => {
+      const c = await registerUser(ctx, name);
+      const addr = await ctx
+        .http()
+        .post(api('/addresses/me'))
+        .set(auth(c.token))
+        .send({ recipientName: name, phone: '01022225555', governorate: 'CAI', city: 'Heliopolis', street: '1 Street', location: { lat: 30, lng: 31 } })
+        .expect(201);
+      return { ...c, addressId: addr.body.data.id as string };
+    };
+    const addToCart = (token: string, quantity = 1) =>
+      ctx.http().post(api(`/carts/${store.brandId}/items`)).set(auth(token)).send({ productId: product._id, variantId: product.variants[0]._id, quantity }).expect(201);
+    const placeOrder = async (c: { token: string; addressId: string }, key: string, couponCode?: string) => {
+      const res = await ctx.http().post(api(`/checkout/${store.brandId}/orders`)).set(auth(c.token)).set('Idempotency-Key', key).send({ addressId: c.addressId, couponCode });
+      if (res.status === 201 && res.body.data.status === 'AWAITING_CONFIRMATION') {
+        await ctx.http().post(api('/orders/me/confirm')).set(auth(c.token)).send({ code: lastCode() }).expect(200);
+      }
+      return res;
+    };
+    const setStatus = (id: string, status: string, extra: Record<string, unknown> = {}) =>
+      ctx.http().patch(api(`/brand/orders/${id}/status`)).set(auth(store.owner.token)).send({ status, ...extra });
+
+    it('applies a store coupon once per customer and gives it back when the order is cancelled', async () => {
+      await ctx
+        .http()
+        .post(api('/brand/coupons'))
+        .set(auth(store.owner.token))
+        .send({ code: 'save10', type: 'PERCENT', value: 10, minSubtotal: 600, endsAt: new Date(Date.now() + 7 * 86_400_000).toISOString() })
+        .expect(201);
+      await ctx.http().post(api('/brand/coupons')).set(auth(store.owner.token)).send({ code: 'SAVE10', type: 'FIXED', value: 5, endsAt: new Date(Date.now() + 86_400_000).toISOString() }).expect(409);
+
+      const c = await newCustomer('Coupon Buyer');
+      await addToCart(c.token, 1);
+      const small = await ctx.http().post(api(`/checkout/${store.brandId}/quote`)).set(auth(c.token)).send({ addressId: c.addressId, couponCode: 'save10' }).expect(422);
+      expect(small.body.error.code).toBe('COUPON_MIN_SUBTOTAL');
+      await addToCart(c.token, 1); // 2 × 500 = 1000
+      const bad = await ctx.http().post(api(`/checkout/${store.brandId}/quote`)).set(auth(c.token)).send({ addressId: c.addressId, couponCode: 'NOPE' }).expect(422);
+      expect(bad.body.error.code).toBe('COUPON_INVALID');
+      const quote = await ctx.http().post(api(`/checkout/${store.brandId}/quote`)).set(auth(c.token)).send({ addressId: c.addressId, couponCode: 'Save10' }).expect(200);
+      expect(quote.body.data).toMatchObject({ subtotal: 1000, discountTotal: 100, shippingFee: 50, grandTotal: 950, coupon: { code: 'SAVE10', discount: 100 } });
+
+      const order = await placeOrder(c, 'coupon-1', 'save10');
+      expect(order.status).toBe(201);
+      expect(order.body.data).toMatchObject({ grandTotal: 950, discountTotal: 100, coupon: { code: 'SAVE10', fundedBy: 'BRAND' } });
+
+      await addToCart(c.token, 2);
+      const again = await ctx.http().post(api(`/checkout/${store.brandId}/quote`)).set(auth(c.token)).send({ addressId: c.addressId, couponCode: 'SAVE10' }).expect(422);
+      expect(again.body.error.code).toBe('COUPON_ALREADY_USED');
+
+      // Cancelling the first order frees the code again.
+      await ctx.http().post(api(`/orders/me/${order.body.data.id}/cancel`)).set(auth(c.token)).send({}).expect(200);
+      await ctx.http().post(api(`/checkout/${store.brandId}/quote`)).set(auth(c.token)).send({ addressId: c.addressId, couponCode: 'SAVE10' }).expect(200);
+      await ctx.http().delete(api(`/carts/${store.brandId}`)).set(auth(c.token)).expect(204);
+    });
+
+    it('credits the store when a Fatrina coupon is used, and commissions the full price', async () => {
+      await ctx
+        .http()
+        .post(api('/admin/coupons'))
+        .set(auth(admin))
+        .send({ code: 'FATRINA50', type: 'FIXED', value: 50, endsAt: new Date(Date.now() + 7 * 86_400_000).toISOString() })
+        .expect(201);
+      const before = (await ctx.http().get(api('/brand/commissions')).set(auth(store.owner.token)).expect(200)).body.data.balance;
+      const c = await newCustomer('Fatrina Coupon Buyer');
+      await addToCart(c.token, 1);
+      const order = await placeOrder(c, 'fatrina-coupon-1', 'FATRINA50');
+      expect(order.body.data).toMatchObject({ grandTotal: 500, coupon: { code: 'FATRINA50', fundedBy: 'PLATFORM' } });
+      const id = order.body.data.id;
+      for (const s of ['CONFIRMED', 'PROCESSING', 'SHIPPED']) await setStatus(id, s).expect(200);
+      const delivered = await setStatus(id, 'DELIVERED').expect(200);
+      expect(delivered.body.data.commission).toEqual({ rate: 0.05, base: 500, amount: 25 }); // full price, not 450
+      const after = (await ctx.http().get(api('/brand/commissions')).set(auth(store.owner.token)).expect(200)).body.data.balance;
+      expect(after - before).toBe(-25); // +25 commission, −50 paid back for the coupon
+    });
+
+    it('prices a running sale everywhere and lists it in its season', async () => {
+      const campaign = await ctx
+        .http()
+        .post(api('/admin/campaigns'))
+        .set(auth(admin))
+        .send({ nameAr: 'الجمعة البيضاء', slug: 'white-friday', startsAt: new Date(Date.now() - 3_600_000).toISOString(), endsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), minPercent: 15 })
+        .expect(201);
+      const sale = (percent: number) => ({ percent, endsAt: new Date(Date.now() + 2 * 86_400_000).toISOString(), campaignId: campaign.body.data._id });
+      const low = await ctx.http().patch(api(`/brand/products/${product._id}`)).set(auth(store.owner.token)).send({ sale: sale(10) }).expect(422);
+      expect(low.body.error.code).toBe('CAMPAIGN_MIN_PERCENT');
+      await ctx.http().patch(api(`/brand/products/${product._id}`)).set(auth(store.owner.token)).send({ sale: sale(20) }).expect(200);
+
+      const pub = await ctx.http().get(api(`/products/${product._id}`)).expect(200);
+      expect(pub.body.data).toMatchObject({ price: 400, compareAtPrice: 500, sale: { percent: 20 } });
+      expect(pub.body.data.variants[0].price).toBe(400);
+      const onSale = await ctx.http().get(api('/products?onSale=true&limit=50')).expect(200);
+      expect(onSale.body.data.map((p: any) => p.id)).toContain(product._id);
+      const season = await ctx.http().get(api(`/products?campaignId=${campaign.body.data._id}`)).expect(200);
+      expect(season.body.data.map((p: any) => p.id)).toEqual([product._id]);
+      const seasons = await ctx.http().get(api('/campaigns')).expect(200);
+      expect(seasons.body.data.map((c: any) => c.slug)).toContain('white-friday');
+
+      const c = await newCustomer('Sale Buyer');
+      const cart = await addToCart(c.token, 1);
+      expect(cart.body.data.subtotal).toBe(400);
+      const order = await placeOrder(c, 'sale-1');
+      expect(order.body.data.grandTotal).toBe(450);
+
+      // Ending the sale puts the normal price back.
+      await ctx.http().patch(api(`/brand/products/${product._id}`)).set(auth(store.owner.token)).send({ sale: null }).expect(200);
+      expect((await ctx.http().get(api(`/products/${product._id}`)).expect(200)).body.data).toMatchObject({ price: 500, sale: null });
+    });
+
+    it('shows the tracking number to the customer once shipped', async () => {
+      const c = await newCustomer('Tracked Buyer');
+      await addToCart(c.token, 1);
+      const order = await placeOrder(c, 'tracking-1');
+      const id = order.body.data.id;
+      await setStatus(id, 'CONFIRMED').expect(200);
+      await setStatus(id, 'PROCESSING').expect(200);
+      await ctx.http().patch(api(`/brand/orders/${id}/shipment`)).set(auth(store.owner.token)).send({ carrier: 'Bosta', trackingNumber: '123456' }).expect(409); // not shipped yet
+      await setStatus(id, 'SHIPPED', { shipment: { carrier: 'Bosta', trackingNumber: '7788990', trackingUrl: 'https://bosta.co/tracking-shipment/?track_num=7788990' } }).expect(200);
+      const seen = await ctx.http().get(api(`/orders/me/${id}`)).set(auth(c.token)).expect(200);
+      expect(seen.body.data.shipment).toMatchObject({ carrier: 'Bosta', trackingNumber: '7788990' });
+      await ctx.http().patch(api(`/brand/orders/${id}/shipment`)).set(auth(store.owner.token)).send({ carrier: 'Aramex', trackingNumber: 'AX-1' }).expect(200);
+      const notes = await ctx.http().get(api('/notifications/me')).set(auth(c.token)).expect(200);
+      expect(notes.body.data.some((n: any) => n.type === 'ORDER_TRACKING')).toBe(true);
+    });
+
+    it('reminds a customer about a cart left for a day, once', async () => {
+      const c = await newCustomer('Forgetful Buyer');
+      await addToCart(c.token, 1);
+      const carts = ctx.app.get(CartsService);
+      const tomorrow = new Date(Date.now() + 25 * 3_600_000);
+      expect(await carts.remindAbandoned(tomorrow)).toBeGreaterThanOrEqual(1);
+      await carts.remindAbandoned(tomorrow);
+      const notes = await ctx.http().get(api('/notifications/me')).set(auth(c.token)).expect(200);
+      expect(notes.body.data.filter((n: any) => n.type === 'CART_REMINDER')).toHaveLength(1);
+      expect(ctx.contact.sent.some((m) => m.target === c.email && m.message.includes('سلتك'))).toBe(true);
     });
   });
 });

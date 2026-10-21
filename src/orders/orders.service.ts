@@ -4,6 +4,12 @@ import { Connection, FilterQuery, Model, Types } from 'mongoose';
 import { OrderStatus, OtpPurpose } from '@/common/enums';
 
 /** Only finished orders can be deleted, so stock and the order flow are never left half-way. */
+export interface ShipmentInput {
+  carrier: string;
+  trackingNumber: string;
+  trackingUrl?: string;
+}
+
 const DELETABLE: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUSED];
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
@@ -12,6 +18,7 @@ import { withTransaction } from '@/common/utils/transaction';
 import { AuditLogsService } from '@/audit-logs/audit-logs.service';
 import { OtpService } from '@/auth/otp.service';
 import { CommissionsService } from '@/commissions/commissions.service';
+import { PromotionsService } from '@/promotions/promotions.service';
 import { UsersService } from '@/users/users.service';
 import { BrandMembersService } from '@/brands/brand-members.service';
 import { NotificationsService } from '@/notifications/notifications.service';
@@ -46,6 +53,7 @@ export class OrdersService {
     private readonly commissions: CommissionsService,
     private readonly otp: OtpService,
     private readonly users: UsersService,
+    private readonly promotions: PromotionsService,
   ) {}
 
   // ---------- Customer ----------
@@ -168,13 +176,30 @@ export class OrdersService {
     return stale.length;
   }
 
-  updateByBrand(userId: string, brandId: string, id: string, status: OrderStatus, note?: string) {
+  updateByBrand(userId: string, brandId: string, id: string, status: OrderStatus, note?: string, shipment?: ShipmentInput) {
     if (status === OrderStatus.CANCELLED && !note) {
       throw AppError.unprocessable('REASON_REQUIRED', 'A cancellation reason is required', [
         { field: 'note', reason: 'required' },
       ]);
     }
-    return this.changeStatus({ _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null }, status, { actor: 'BRAND', userId, note });
+    return this.changeStatus({ _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null }, status, { actor: 'BRAND', userId, note }, shipment);
+  }
+
+  /** Adds or corrects the tracking details of a shipped order. */
+  async setShipment(brandId: string, id: string, shipment: ShipmentInput) {
+    const order = await this.orders.findOneAndUpdate(
+      { _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null, status: { $in: [OrderStatus.SHIPPED, OrderStatus.DELIVERED] } },
+      { $set: { shipment: { ...shipment, trackingUrl: shipment.trackingUrl ?? null, shippedAt: new Date() } } },
+      { new: true },
+    );
+    if (!order) throw AppError.conflict('INVALID_STATE', 'Tracking can be added once the order is shipped');
+    await this.notifications.notify(order.userId.toString(), {
+      type: 'ORDER_TRACKING',
+      title: `طلب ${order.orderNumber} في الطريق`,
+      body: `اتشحن مع ${shipment.carrier}، رقم الشحنة ${shipment.trackingNumber}`,
+      data: { orderId: order.id },
+    });
+    return this.toView(order.toObject(), 'BRAND');
   }
 
   /** Customers who ordered from this brand, with totals. Only data from this brand's own orders. */
@@ -255,6 +280,7 @@ export class OrdersService {
     scope: FilterQuery<Order>,
     to: OrderStatus,
     by: { actor: OrderActor; userId: string; note?: string },
+    shipment?: ShipmentInput,
   ) {
     const updated = await withTransaction(this.connection, async (session) => {
       const order = await this.orders.findOne(scope).session(session);
@@ -266,6 +292,7 @@ export class OrdersService {
       const now = new Date();
       const set: Partial<Order> = { status: to };
       if (to === OrderStatus.CANCELLED) set.cancelReason = by.note;
+      if (to === OrderStatus.SHIPPED && shipment) set.shipment = { ...shipment, trackingUrl: shipment.trackingUrl ?? null, shippedAt: now };
       if (to === OrderStatus.DELIVERED) Object.assign(set, { deliveredAt: now, paymentStatus: 'PAID' });
 
       // Matching on the current status makes concurrent updates safe: only one can win.
@@ -286,6 +313,8 @@ export class OrdersService {
         result.commission = commission;
         await this.orders.updateOne({ _id: result._id }, { $set: { commission } }, { session });
       }
+      // A coupon used on an order that won't be delivered can be used again.
+      if ((to === OrderStatus.CANCELLED || to === OrderStatus.REFUSED) && order.coupon) await this.promotions.release(order._id, session);
       if (restocks(from, to)) {
         for (const item of order.items) {
           // Variants deleted since the order simply don't match; nothing to restock.
@@ -383,6 +412,8 @@ export class OrdersService {
       notes: order.notes,
       cancelReason: order.cancelReason ?? null,
       deliveredAt: order.deliveredAt ?? null,
+      coupon: order.coupon ? { code: order.coupon.code, discount: order.coupon.discount, fundedBy: order.coupon.fundedBy } : null,
+      shipment: order.shipment ?? null,
       commission: actor === 'CUSTOMER' ? undefined : (order.commission ?? null),
       history: order.statusHistory.map((h) => ({ status: h.status, at: h.at, actor: h.actor, note: h.note ?? null })),
       allowedNextStatuses: allowedNext(order.status, actor),

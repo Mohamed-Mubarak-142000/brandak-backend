@@ -23,7 +23,7 @@ export interface Quote {
 const round = (n: number) => Math.round(n * 100) / 100;
 
 /** Server-side order total. The app may display a quote but never decides the price. */
-export function computeQuote(lines: PriceLine[], rules: ShippingRules, governorate: string): Quote {
+export function computeQuote(lines: PriceLine[], rules: ShippingRules, governorate: string, discount = 0): Quote {
   const subtotal = round(lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0));
 
   if (subtotal < rules.minOrderAmount) {
@@ -41,7 +41,8 @@ export function computeQuote(lines: PriceLine[], rules: ShippingRules, governora
   }
   const freeShipping = rules.freeShippingThreshold !== null && subtotal >= rules.freeShippingThreshold;
   const shippingFee = freeShipping ? 0 : round(baseFee);
-  const discountTotal = 0; // coupons are out of MVP scope
+  // A coupon never takes more than the items themselves; shipping is always paid.
+  const discountTotal = round(Math.min(Math.max(0, discount), subtotal));
 
   return { subtotal, shippingFee, discountTotal, grandTotal: round(subtotal + shippingFee - discountTotal), currency: 'EGP' };
 }

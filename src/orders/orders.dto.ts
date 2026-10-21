@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -11,6 +12,8 @@ import {
   Length,
   Matches,
   MaxLength,
+  IsUrl,
+  ValidateNested,
 } from 'class-validator';
 import { OrderPaymentMethod, OrderStatus } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
@@ -18,6 +21,26 @@ import { PageQueryDto } from '@/common/pagination';
 export class QuoteDto {
   @IsMongoId()
   addressId: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  couponCode?: string;
+}
+
+export class ShipmentDto {
+  @IsString()
+  @Length(2, 40)
+  carrier: string;
+
+  @IsString()
+  @Length(3, 60)
+  trackingNumber: string;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['https', 'http'], require_protocol: true })
+  @MaxLength(500)
+  trackingUrl?: string;
 }
 
 export class PlaceOrderDto extends QuoteDto {
@@ -48,6 +71,12 @@ export class UpdateOrderStatusDto {
   @IsString()
   @Length(3, 500)
   note?: string;
+
+  /** Optional tracking details when marking the order as shipped. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ShipmentDto)
+  shipment?: ShipmentDto;
 }
 
 export class CancelOrderDto {

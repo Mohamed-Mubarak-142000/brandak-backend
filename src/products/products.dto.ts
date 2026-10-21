@@ -5,6 +5,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsEnum,
   IsIn,
   IsInt,
@@ -43,6 +44,25 @@ export class VariantDto {
   stock: number;
 }
 
+export class SaleDto {
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  percent: number;
+
+  @IsOptional()
+  @IsDateString()
+  startsAt?: string;
+
+  @IsDateString()
+  endsAt: string;
+
+  /** Join a running season (White Friday, Ramadan...). */
+  @IsOptional()
+  @IsMongoId()
+  campaignId?: string;
+}
+
 export class CreateProductDto {
   @IsString()
   @Length(2, 120)
@@ -66,6 +86,12 @@ export class CreateProductDto {
   @Min(0)
   @Max(1_000_000)
   compareAtPrice?: number | null;
+
+  /** null removes a sale. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SaleDto)
+  sale?: SaleDto | null;
 
   /** Ids from POST /uploads with purpose PRODUCT_IMAGE; the first is the cover image. */
   @IsArray()
@@ -150,6 +176,17 @@ export class ProductsQueryDto extends PageQueryDto {
   inStock?: boolean;
 
   @IsOptional()
-  @IsIn(['newest', 'price_asc', 'price_desc', 'rating', 'popular'])
-  sort?: 'newest' | 'price_asc' | 'price_desc' | 'rating' | 'popular';
+  @IsIn(['newest', 'price_asc', 'price_desc', 'rating', 'popular', 'discount'])
+  sort?: 'newest' | 'price_asc' | 'price_desc' | 'rating' | 'popular' | 'discount';
+
+  /** Only products with a sale running now. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  onSale?: boolean;
+
+  /** Only products on sale in this season. */
+  @IsOptional()
+  @IsMongoId()
+  campaignId?: string;
 }

@@ -5,6 +5,8 @@ import { FilePurpose, ProductStatus } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
 import { IMAGE_WIDTH, optimizedImage } from '@/common/utils/image';
+import { PromotionsService } from '@/promotions/promotions.service';
+import { activeSalePercent, salePrice } from '@/promotions/price-math';
 import { escapeRegex, normalizeSearchText } from '@/common/utils/text';
 import { BrandsService } from '@/brands/brands.service';
 import { CategoriesService } from '@/categories/categories.service';
@@ -32,6 +34,7 @@ export class ProductsService {
     private readonly categories: CategoriesService,
     private readonly subscriptions: SubscriptionsService,
     private readonly uploads: UploadsService,
+    private readonly promotions: PromotionsService,
   ) {}
 
   // ---------- Brand owner ----------
@@ -65,6 +68,7 @@ export class ProductsService {
       images: await this.productImages(userId, brandId, dto.imageFileIds, dto.imageColors),
       price: dto.price,
       compareAtPrice: dto.compareAtPrice ?? null,
+      sale: await this.saleFrom(dto.sale),
       variants: dto.variants.map(toVariant),
       tags: dto.tags ?? [],
       status,
@@ -82,6 +86,7 @@ export class ProductsService {
     if (dto.description !== undefined) product.description = dto.description;
     if (dto.price !== undefined) product.price = dto.price;
     if (dto.compareAtPrice !== undefined) product.compareAtPrice = dto.compareAtPrice;
+    if (dto.sale !== undefined) product.sale = await this.saleFrom(dto.sale);
     this.assertCompareAtPrice(product.price, product.compareAtPrice);
     if (dto.tags) product.tags = dto.tags;
     if (dto.imageFileIds) {
@@ -101,6 +106,16 @@ export class ProductsService {
     this.refreshDerived(product);
     await product.save();
     return product.toObject();
+  }
+
+  /** Validates and normalises a sale (a season sale must fit the season). null clears it. */
+  private async saleFrom(dto?: { percent: number; startsAt?: string; endsAt: string; campaignId?: string } | null) {
+    if (!dto) return null;
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : new Date();
+    const endsAt = new Date(dto.endsAt);
+    if (endsAt <= startsAt) throw AppError.unprocessable('INVALID_DATES', 'The sale must end after it starts');
+    if (dto.campaignId) await this.promotions.assertSaleFitsCampaign(dto.campaignId, { percent: dto.percent, startsAt, endsAt });
+    return { percent: dto.percent, startsAt, endsAt, campaignId: dto.campaignId ? new Types.ObjectId(dto.campaignId) : null };
   }
 
   /** Photos allowed per product on the store's plan (10 without a plan, for drafts). */
@@ -208,6 +223,11 @@ export class ProductsService {
       };
     }
     if (query.inStock) filter.totalStock = { $gt: 0 };
+    if (query.onSale || query.campaignId || query.sort === 'discount') {
+      const now = new Date();
+      Object.assign(filter, { 'sale.startsAt': { $lte: now }, 'sale.endsAt': { $gt: now } });
+      if (query.campaignId) filter['sale.campaignId'] = new Types.ObjectId(query.campaignId);
+    }
     if (query.q?.trim()) filter.searchText = new RegExp(escapeRegex(normalizeSearchText(query.q)));
 
     const sorts: Record<string, Record<string, SortOrder>> = {
@@ -216,6 +236,7 @@ export class ProductsService {
       price_desc: { price: -1 },
       rating: { ratingAvg: -1, ratingCount: -1 },
       popular: { soldCount: -1 },
+      discount: { 'sale.percent': -1 },
     };
     const page = await paginate(this.products, filter, query, {
       sort: { ...sorts[query.sort ?? 'newest'], _id: -1 },
@@ -243,7 +264,7 @@ export class ProductsService {
         id: v._id.toString(),
         size: v.size ?? null,
         color: v.color ?? null,
-        price: v.price ?? product.price,
+        price: salePrice(v.price ?? product.price, activeSalePercent(product.sale)),
         inStock: v.stock > 0,
         // Exact stock helps the quantity picker; capped so competitors can't read inventory precisely.
         available: Math.min(v.stock, 20),
@@ -303,11 +324,14 @@ export class ProductsService {
 
   toCard(p: Lean<Product>) {
     const brand = p.brandId as unknown as { _id: Types.ObjectId; name?: string; slug?: string; logo?: { url: string } };
+    // During a sale the old price shows struck through and the countdown uses sale.endsAt.
+    const pct = activeSalePercent(p.sale);
     return {
       id: p._id.toString(),
       title: p.title,
-      price: p.price,
-      compareAtPrice: p.compareAtPrice,
+      price: salePrice(p.price, pct),
+      compareAtPrice: pct ? Math.max(p.price, p.compareAtPrice ?? 0) : p.compareAtPrice,
+      sale: pct ? { percent: pct, endsAt: p.sale!.endsAt, campaignId: p.sale!.campaignId?.toString() ?? null } : null,
       imageUrl: optimizedImage(p.images[0]?.url, IMAGE_WIDTH.card),
       inStock: p.totalStock > 0,
       ratingAvg: p.ratingAvg,

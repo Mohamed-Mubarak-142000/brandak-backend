@@ -76,11 +76,27 @@ export class CommissionsService {
    * Returns what was charged so it can be stored on the order.
    */
   async recordForOrder(
-    order: { _id: Types.ObjectId; brandId: Types.ObjectId; orderNumber: string; subtotal: number; discountTotal?: number },
+    order: {
+      _id: Types.ObjectId;
+      brandId: Types.ObjectId;
+      orderNumber: string;
+      subtotal: number;
+      discountTotal?: number;
+      coupon?: { code: string; discount: number; fundedBy: 'BRAND' | 'PLATFORM' };
+    },
     session: ClientSession,
   ) {
     const { commissionRate } = await this.terms();
-    const c = commissionFor(order, commissionRate);
+    // A Fatrina coupon is the platform's discount: the store is commissioned on the full price
+    // and credited the discount it gave on our behalf.
+    const platformFunded = order.coupon?.fundedBy === 'PLATFORM';
+    const c = commissionFor({ subtotal: order.subtotal, discountTotal: platformFunded ? 0 : order.discountTotal }, commissionRate);
+    if (platformFunded && order.coupon!.discount > 0) {
+      await this.ledger.create(
+        [{ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: -order.coupon!.discount, orderId: order._id, orderNumber: order.orderNumber, note: `خصم كوبون فاترينة ${order.coupon!.code}` }],
+        { session },
+      );
+    }
     if (c.amount <= 0) return c;
     await this.ledger.create(
       [{ brandId: order.brandId, type: LedgerType.COMMISSION, amount: c.amount, rate: c.rate, base: c.base, orderId: order._id, orderNumber: order.orderNumber }],

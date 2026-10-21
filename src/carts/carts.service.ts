@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types } from 'mongoose';
 import { ProductStatus } from '@/common/enums';
@@ -8,6 +8,10 @@ import { Brand } from '@/brands/brand.schema';
 import { BrandsService } from '@/brands/brands.service';
 import { Product } from '@/products/product.schema';
 import { Cart, CartDocument, CartItem } from './cart.schema';
+import { unitPriceNow } from '@/promotions/price-math';
+import { CONTACT_CHANNEL, ContactChannel } from '@/auth/contact-channel';
+import { NotificationsService } from '@/notifications/notifications.service';
+import { UsersService } from '@/users/users.service';
 
 export const MAX_QTY_PER_LINE = 50;
 const MAX_LINES = 50;
@@ -36,7 +40,56 @@ export class CartsService {
     @InjectModel(Cart.name) private readonly carts: Model<Cart>,
     @InjectModel(Product.name) private readonly products: Model<Product>,
     private readonly brands: BrandsService,
+    private readonly notifications: NotificationsService,
+    private readonly users: UsersService,
+    @Inject(CONTACT_CHANNEL) private readonly mail: ContactChannel,
   ) {}
+
+  /**
+   * Reminds customers of carts they left 1–3 days ago (once per cart change), in the app and
+   * by email. Runs from the daily cron.
+   */
+  async remindAbandoned(now = new Date()) {
+    const day = 86_400_000;
+    const carts = await this.carts
+      .find({
+        'items.0': { $exists: true },
+        updatedAt: { $lte: new Date(now.getTime() - day), $gte: new Date(now.getTime() - 3 * day) },
+        $or: [{ remindedAt: null }, { $expr: { $lt: ['$remindedAt', '$updatedAt'] } }],
+      })
+      .limit(500)
+      .lean();
+    let sent = 0;
+    for (const cart of carts) {
+      const [brand, first, user] = await Promise.all([
+        this.brands.getById(cart.brandId).catch(() => null),
+        this.products.findById(cart.items[0].productId).select('title').lean(),
+        this.users.getById(cart.userId.toString()).catch(() => null),
+      ]);
+      if (!brand || !user) continue;
+      const count = cart.items.reduce((n, i) => n + i.quantity, 0);
+      const what = first?.title ? `«${first.title}»${count > 1 ? ` و${count - 1} قطعة تانية` : ''}` : `${count} قطعة`;
+      await this.notifications.notify(user._id.toString(), {
+        type: 'CART_REMINDER',
+        title: 'سلتك لسه مستنياك',
+        body: `${what} في سلتك من ${brand.name}. كمّل طلبك قبل ما الكمية تخلص.`,
+        data: { brandId: cart.brandId.toString() },
+        dedupeKey: `cart-${cart._id.toString()}-${cart.updatedAt.toISOString()}`,
+      });
+      await this.mail
+        .sendNotice({
+          to: user.email,
+          subject: 'سلتك في فاترينة لسه مستنياك',
+          title: `لسه عايز ${what}؟`,
+          lines: [`سبت منتجات في سلتك من ${brand.name}.`, 'الكميات محدودة، كمّل طلبك من التطبيق وادفع عند الاستلام.'],
+        })
+        .catch(() => undefined);
+      // timestamps: false keeps updatedAt, so a reminded cart isn't reminded again until it changes.
+      await this.carts.updateOne({ _id: cart._id }, { $set: { remindedAt: now } }, { timestamps: false });
+      sent++;
+    }
+    return sent;
+  }
 
   /** Summary of every non-empty cart, one per brand. */
   async listMine(userId: string) {
@@ -134,7 +187,7 @@ export class CartsService {
     return items.map((item) => {
       const product = products.find((p) => p._id.equals(item.productId));
       const variant = product?.variants.find((v) => v._id.equals(item.variantId));
-      const unitPrice = variant ? (variant.price ?? product!.price) : 0;
+      const unitPrice = variant ? unitPriceNow(product!, variant) : 0;
       let issue: LineIssue | null = null;
       if (!product || !variant || product.status !== ProductStatus.ACTIVE) issue = 'UNAVAILABLE';
       else if (variant.stock === 0) issue = 'OUT_OF_STOCK';

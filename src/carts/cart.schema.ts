@@ -29,6 +29,10 @@ export class Cart {
   @Prop({ type: [CartItemSchema], default: [] })
   items: CartItem[];
 
+  /** Last abandoned-cart reminder; a cart changed after it can be reminded again. */
+  @Prop({ type: Date, default: null })
+  remindedAt: Date | null;
+
   updatedAt: Date;
 }
 

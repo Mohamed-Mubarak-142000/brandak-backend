@@ -23,6 +23,7 @@ import { OrdersModule } from './orders/orders.module';
 import { ProductsModule } from './products/products.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { CommissionsModule } from './commissions/commissions.module';
+import { PromotionsModule } from './promotions/promotions.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -77,6 +78,7 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     BrandsModule,
     SubscriptionsModule,
     CommissionsModule,
+    PromotionsModule,
     ProductsModule,
     AddressesModule,
     WishlistsModule,
