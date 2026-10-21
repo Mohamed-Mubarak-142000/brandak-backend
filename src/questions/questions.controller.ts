@@ -21,6 +21,12 @@ class BrandQuestionsQueryDto extends PageQueryDto {
   @IsBoolean()
   unanswered?: boolean;
 }
+const toBool = ({ value }: { value: unknown }) => (value === undefined || value === '' ? undefined : value === true || value === 'true');
+class AdminQuestionsQueryDto extends PageQueryDto {
+  @IsOptional() @Transform(toBool) @IsBoolean() hidden?: boolean;
+  @IsOptional() @Transform(toBool) @IsBoolean() answered?: boolean;
+  @IsOptional() @IsString() @Length(0, 100) q?: string;
+}
 class HideDto {
   @IsBoolean() hidden: boolean;
 }
@@ -56,6 +62,13 @@ export class QuestionsController {
   @Post('brand/questions/:id/answer')
   answer(@CurrentBrand() brand: BrandContext, @Param('id', ParseObjectIdPipe) id: string, @Body() dto: AnswerDto) {
     return this.questions.answer(brand.brandId, id, dto.text);
+  }
+
+  @ApiBearerAuth()
+  @Roles(Role.SUPER_ADMIN)
+  @Get('admin/questions')
+  all(@Query() query: AdminQuestionsQueryDto) {
+    return this.questions.listAll(query);
   }
 
   @ApiBearerAuth()

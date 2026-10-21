@@ -115,7 +115,12 @@ describe('Fatrina after-sales (e2e)', () => {
       // Another store can't answer it; an admin can hide it.
       const other = await onboardBrand('Other Q Store');
       await ctx.http().post(api(`/brand/questions/${asked.body.data.id}/answer`)).set(auth(other.owner.token)).send({ text: 'xx' }).expect(404);
+      const mod = await ctx.http().get(api('/admin/questions?hidden=false&q=' + encodeURIComponent('المقاس'))).set(auth(admin)).expect(200);
+      expect(mod.body.data[0]).toMatchObject({ id: asked.body.data.id, productTitle: product.title, brandName: 'Q Store', hidden: false });
+      await ctx.http().get(api('/admin/questions')).set(auth(c.token)).expect(403);
       await ctx.http().post(api(`/admin/questions/${asked.body.data.id}/hidden`)).set(auth(admin)).send({ hidden: true }).expect(200);
+      const hiddenList = await ctx.http().get(api('/admin/questions?hidden=true')).set(auth(admin)).expect(200);
+      expect(hiddenList.body.data.map((x: any) => x.id)).toContain(asked.body.data.id);
       expect((await ctx.http().get(api(`/products/${product._id}/questions`)).expect(200)).body.data).toHaveLength(0);
     });
 
@@ -230,7 +235,9 @@ describe('Fatrina after-sales (e2e)', () => {
       const c = await registerUser(ctx, 'Helpme');
       const t = await ctx.http().post(api('/support/tickets')).set(auth(c.token)).send({ type: 'ACCOUNT', subject: 'مش عارف أغير الإيميل', text: 'محتاج مساعدة في تغيير الإيميل' }).expect(201);
       expect(t.body.data).toMatchObject({ status: 'OPEN', protection: false });
-      await ctx.http().post(api(`/admin/tickets/${t.body.data.id}/messages`)).set(auth(admin)).send({ text: 'من الإعدادات > الحساب' }).expect(201);
+      const shot = await upload(ctx, admin, 'CLAIM_IMAGE');
+      const adminReply = await ctx.http().post(api(`/admin/tickets/${t.body.data.id}/messages`)).set(auth(admin)).send({ text: 'من الإعدادات > الحساب', imageFileIds: [shot] }).expect(201);
+      expect(adminReply.body.data.messages[1].images).toHaveLength(1);
       const reply = await ctx.http().post(api(`/support/tickets/${t.body.data.id}/messages`)).set(auth(c.token)).send({ text: 'تمام شكراً' }).expect(201);
       expect(reply.body.data.messages.map((m: any) => m.author)).toEqual(['CUSTOMER', 'ADMIN', 'CUSTOMER']);
       await ctx.http().post(api(`/support/tickets/${t.body.data.id}/close`)).set(auth(c.token)).expect(200);

@@ -5,6 +5,8 @@ import { BrandMembersService } from '@/brands/brand-members.service';
 import { ProductStatus } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
+import { escapeRegex } from '@/common/utils/text';
+import { Brand } from '@/brands/brand.schema';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Product } from '@/products/product.schema';
 import { UsersService } from '@/users/users.service';
@@ -19,6 +21,7 @@ export class QuestionsService {
   constructor(
     @InjectModel(Question.name) private readonly questions: Model<Question>,
     @InjectModel(Product.name) private readonly products: Model<Product>,
+    @InjectModel(Brand.name) private readonly brands: Model<Brand>,
     private readonly users: UsersService,
     private readonly members: BrandMembersService,
     private readonly notifications: NotificationsService,
@@ -87,6 +90,36 @@ export class QuestionsService {
       data: { productId: q.productId.toString() },
     });
     return this.toView(q.toObject());
+  }
+
+/** Moderation list for admins: every question, newest first, with product and store names. */
+  async listAll(query: { page: number; limit: number; hidden?: boolean; answered?: boolean; q?: string }) {
+    const filter: FilterQuery<Question> = {};
+    if (query.hidden !== undefined) filter.hidden = query.hidden;
+    if (query.answered !== undefined) filter.answeredAt = query.answered ? { $ne: null } : null;
+    if (query.q?.trim()) {
+      const re = new RegExp(escapeRegex(query.q.trim()), 'i');
+      filter.$or = [{ text: re }, { answer: re }, { userName: re }];
+    }
+    const page = await paginate(this.questions, filter, query, { sort: { createdAt: -1 } });
+    const [products, brands] = await Promise.all([
+      this.products.find({ _id: { $in: page.items.map((q) => q.productId) } }).select('title').lean(),
+      this.brands.find({ _id: { $in: page.items.map((q) => q.brandId) } }).select('name').lean(),
+    ]);
+    const titles = new Map(products.map((p) => [p._id.toString(), p.title]));
+    const names = new Map(brands.map((b) => [b._id.toString(), b.name]));
+    return new PageResult(
+      page.items.map((q) => ({
+        ...this.toView(q),
+        hidden: q.hidden,
+        brandId: q.brandId.toString(),
+        productTitle: titles.get(q.productId.toString()) ?? '',
+        brandName: names.get(q.brandId.toString()) ?? '',
+      })),
+      page.page,
+      page.limit,
+      page.total,
+    );
   }
 
   async setHidden(id: string, hidden: boolean) {
