@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsInt, IsMongoId, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsMongoId, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
 import { ReportStatus, ReportTarget, ReviewStatus } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 
@@ -17,6 +17,19 @@ export class CreateReviewDto {
   @IsString()
   @MaxLength(1000)
   comment?: string;
+
+  /** Ids from POST /uploads with purpose REVIEW_IMAGE. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @IsMongoId({ each: true })
+  imageFileIds?: string[];
+}
+
+export class ReplyReviewDto {
+  @IsString()
+  @Length(2, 500)
+  text: string;
 }
 
 export const REPORT_REASONS = ['SPAM', 'OFFENSIVE', 'FAKE', 'PROHIBITED_PRODUCT', 'FRAUD', 'OTHER'] as const;
@@ -56,4 +69,11 @@ export class ResolveReportDto {
 export class SetReviewStatusDto {
   @IsEnum(ReviewStatus)
   status: ReviewStatus;
+}
+
+export class BrandReviewsQueryDto extends PageQueryDto {
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  unanswered?: boolean;
 }

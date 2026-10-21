@@ -146,6 +146,12 @@ export class BrandSettingsDto {
   returnPolicy?: string;
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  returnDays?: number;
+
+  @IsOptional()
   @IsBoolean()
   acceptsOrders?: boolean;
 }

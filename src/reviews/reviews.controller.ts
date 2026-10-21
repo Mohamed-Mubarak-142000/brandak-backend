@@ -1,14 +1,17 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { AuthUser, CurrentUser, Public, Roles } from '@/common/decorators';
+import { AuthUser, BrandContext, CurrentBrand, CurrentUser, Public, Roles } from '@/common/decorators';
+import { BrandMemberGuard } from '@/common/guards/brand-member.guard';
 import { Role } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
 import { ReasonDto } from '@/brands/brands.dto';
 import {
+  BrandReviewsQueryDto,
   CreateReportDto,
   CreateReviewDto,
   ReportsQueryDto,
+  ReplyReviewDto,
   ResolveReportDto,
   SetReviewStatusDto,
 } from './reviews.dto';
@@ -42,6 +45,25 @@ export class ReviewsController {
   @Post('reports')
   report(@CurrentUser() user: AuthUser, @Body() dto: CreateReportDto) {
     return this.reviews.report(user.userId, dto);
+  }
+}
+
+@ApiTags('Brand dashboard')
+@ApiBearerAuth()
+@UseGuards(BrandMemberGuard)
+@Controller('brand/reviews')
+export class BrandReviewsController {
+  constructor(private readonly reviews: ReviewsService) {}
+
+  @Get()
+  list(@CurrentBrand() brand: BrandContext, @Query() query: BrandReviewsQueryDto) {
+    return this.reviews.listForBrand(brand.brandId, query);
+  }
+
+  @Post(':id/reply')
+  @HttpCode(200)
+  reply(@CurrentBrand() brand: BrandContext, @Param('id', ParseObjectIdPipe) id: string, @Body() dto: ReplyReviewDto) {
+    return this.reviews.reply(brand.brandId, id, dto.text);
   }
 }
 

@@ -5,6 +5,8 @@ import { FilePurpose, ProductStatus } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
 import { IMAGE_WIDTH, optimizedImage } from '@/common/utils/image';
+import { AdPlacement } from '@/ads/ad.schema';
+import { AdsService } from '@/ads/ads.service';
 import { PromotionsService } from '@/promotions/promotions.service';
 import { activeSalePercent, salePrice } from '@/promotions/price-math';
 import { escapeRegex, normalizeSearchText } from '@/common/utils/text';
@@ -35,6 +37,7 @@ export class ProductsService {
     private readonly subscriptions: SubscriptionsService,
     private readonly uploads: UploadsService,
     private readonly promotions: PromotionsService,
+    private readonly ads: AdsService,
   ) {}
 
   // ---------- Brand owner ----------
@@ -212,9 +215,11 @@ export class ProductsService {
       brandId: { $in: await this.brands.visibleBrandIds(query.brandId ? { _id: query.brandId } : {}) },
     };
     const categoryIds = [...(query.categoryId ? [query.categoryId] : []), ...(query.categoryIds ?? [])];
+    let inCategories: Types.ObjectId[] = [];
     if (categoryIds.length) {
       const withChildren = await Promise.all(categoryIds.map((id) => this.categories.withChildren(id)));
-      filter.categoryId = { $in: withChildren.flat() };
+      inCategories = withChildren.flat().map((id) => new Types.ObjectId(String(id)));
+      filter.categoryId = { $in: inCategories };
     }
     if (query.minPrice !== undefined || query.maxPrice !== undefined) {
       filter.price = {
@@ -238,11 +243,45 @@ export class ProductsService {
       popular: { soldCount: -1 },
       discount: { 'sale.percent': -1 },
     };
-    const page = await paginate(this.products, filter, query, {
+    // Paid placements lead the first page of a search or a category (only products that match).
+    const placement = query.page === 1 && !query.brandId && (!query.sort || query.sort === 'newest')
+      ? query.q?.trim() ? AdPlacement.SEARCH_TOP : inCategories.length ? AdPlacement.CATEGORY_TOP : null
+      : null;
+    const sponsored = placement ? await this.sponsored(placement, filter, placement === AdPlacement.CATEGORY_TOP ? inCategories : undefined) : [];
+    const page = await paginate(this.products, sponsored.length ? { ...filter, _id: { $nin: sponsored.map((s) => s.p._id) } } : filter, query, {
       sort: { ...sorts[query.sort ?? 'newest'], _id: -1 },
       populate: 'brandId',
     });
-    return new PageResult(page.items.map((p) => this.toCard(p)), page.page, page.limit, page.total);
+    return new PageResult(
+      [...sponsored.map((s) => ({ ...this.toCard(s.p), sponsored: true, adId: s.adId })), ...page.items.map((p) => this.toCard(p))],
+      page.page,
+      page.limit,
+      page.total + sponsored.length,
+    );
+  }
+
+  /** Products in the home "featured" rail (paid HOME_BANNER placements). */
+  async featured() {
+    const running = await this.ads.runningProductIds(AdPlacement.HOME_BANNER);
+    if (!running.length) return [];
+    const filter: FilterQuery<Product> = { status: ProductStatus.ACTIVE, brandId: { $in: await this.brands.visibleBrandIds({}) } };
+    const found = await this.sponsored(AdPlacement.HOME_BANNER, filter);
+    return found.map((s) => ({ ...this.toCard(s.p), sponsored: true, adId: s.adId }));
+  }
+
+  private async sponsored(placement: AdPlacement, filter: FilterQuery<Product>, categoryIds?: Types.ObjectId[]) {
+    const running = await this.ads.runningProductIds(placement, { categoryIds });
+    if (!running.length) return [];
+    const docs = await this.products.find({ ...filter, _id: { $in: running.map((r) => r.productId) } }).populate('brandId').lean();
+    const byId = new Map(docs.map((d) => [d._id.toString(), d]));
+    // Keep the rotation order; one slot per product even if bought twice.
+    const seen = new Set<string>();
+    const picked = running
+      .filter((r) => byId.has(r.productId.toString()) && !seen.has(r.productId.toString()) && seen.add(r.productId.toString()))
+      .slice(0, this.ads.slots(placement))
+      .map((r) => ({ adId: r.adId, p: byId.get(r.productId.toString())! as Lean<Product> }));
+    await this.ads.countImpressions(picked.map((s) => s.adId));
+    return picked;
   }
 
   async getPublic(id: string) {

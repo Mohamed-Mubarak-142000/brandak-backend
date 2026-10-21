@@ -18,6 +18,10 @@ export class PlatformSettings {
   /** Owed amount (EGP) above which the store stops receiving orders until it pays. */
   @Prop({ required: true, min: 0, default: 2000 })
   maxUnpaidBalance: number;
+
+  /** Price (EGP) of one week of each paid placement. */
+  @Prop({ type: Object, default: () => ({ SEARCH_TOP: 150, CATEGORY_TOP: 100, HOME_BANNER: 300 }) })
+  adWeekPrices: Record<string, number>;
 }
 export const PlatformSettingsSchema = SchemaFactory.createForClass(PlatformSettings);
 

@@ -47,6 +47,10 @@ export class BrandSettings {
   @Prop({ default: '' })
   returnPolicy: string;
 
+  /** Days after delivery a customer can ask to return items; 0 means no returns. */
+  @Prop({ default: 14, min: 0, max: 30 })
+  returnDays: number;
+
   /** Lets an owner pause new orders (e.g. on holiday) without hiding the store. */
   @Prop({ default: true })
   acceptsOrders: boolean;
@@ -101,6 +105,10 @@ export class Brand {
   /** Since when the store has owed commission (null = owes nothing). Drives the order block. */
   @Prop({ type: Date, default: null })
   commissionDueSince: Date | null;
+
+  /** Buyer-protection cases decided against the store. Too many suspend it. */
+  @Prop({ default: 0 })
+  protectionStrikes: number;
 
   @Prop({ default: '' })
   searchText: string;

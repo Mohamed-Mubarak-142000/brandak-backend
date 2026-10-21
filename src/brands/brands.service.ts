@@ -371,6 +371,7 @@ export class BrandsService {
         processingDays: s.processingDays,
         shippingPolicy: s.shippingPolicy,
         returnPolicy: s.returnPolicy,
+        returnDays: s.returnDays ?? 14,
         acceptsOrders: s.acceptsOrders,
       },
       ratingAvg: brand.ratingAvg,

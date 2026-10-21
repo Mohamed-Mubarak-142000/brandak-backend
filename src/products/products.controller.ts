@@ -29,6 +29,14 @@ export class ProductsController {
     return this.products.search(query);
   }
 
+  /** Paid "featured" products for the home screen. */
+  @Public()
+  @PublicCache(60)
+  @Get('products/featured')
+  featured() {
+    return this.products.featured();
+  }
+
   @Public()
   @PublicCache(60)
   @Get('products/:id')

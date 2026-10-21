@@ -27,6 +27,14 @@ export class Review {
   @Prop({ default: '' })
   comment: string;
 
+  /** Up to 3 photos of the delivered product. */
+  @Prop({ type: [{ fileId: Types.ObjectId, url: String, _id: false }], default: [] })
+  images: { fileId: Types.ObjectId; url: string }[];
+
+  /** The store's public answer, shown under the review. */
+  @Prop({ type: Object, default: null })
+  reply: { text: string; at: Date } | null;
+
   @Prop({ type: String, enum: ReviewStatus, default: ReviewStatus.VISIBLE })
   status: ReviewStatus;
 

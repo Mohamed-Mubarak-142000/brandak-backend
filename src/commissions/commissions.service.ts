@@ -29,6 +29,8 @@ const DEFAULT_TERMS: CommissionTerms = { commissionRate: 0.05, settlementDays: 1
  * Cash orders leave the commission owed by the store; it settles by InstaPay transfer, and a
  * store that owes too much (or for too long) stops receiving new orders until it pays.
  */
+export const DEFAULT_AD_PRICES: Record<string, number> = { SEARCH_TOP: 150, CATEGORY_TOP: 100, HOME_BANNER: 300 };
+
 @Injectable()
 export class CommissionsService {
   private cached: { terms: CommissionTerms; at: number } | null = null;
@@ -69,6 +71,23 @@ export class CommissionsService {
     return this.terms();
   }
 
+  /** Weekly prices of paid placements (ads), editable by admins. */
+  async adWeekPrices(): Promise<Record<string, number>> {
+    const doc = await this.settingsModel.findOne({ key: 'default' }).select('adWeekPrices').lean();
+    return { ...DEFAULT_AD_PRICES, ...(doc?.adWeekPrices ?? {}) };
+  }
+
+  async updateAdWeekPrices(adminId: string, prices: Record<string, number>) {
+    const next = { ...(await this.adWeekPrices()), ...prices };
+    const doc = await this.settingsModel.findOneAndUpdate(
+      { key: 'default' },
+      { $set: { adWeekPrices: next }, $setOnInsert: { key: 'default' } },
+      { new: true, upsert: true, setDefaultsOnInsert: true },
+    );
+    await this.audit.log({ actorId: adminId, actorType: 'ADMIN', action: 'AD_PRICES_UPDATED', entityType: 'PlatformSettings', entityId: doc._id, data: prices });
+    return next;
+  }
+
   // ---------- Orders ----------
 
   /**
@@ -105,6 +124,38 @@ export class CommissionsService {
     // Start the settlement clock only when the store goes from owing nothing to owing something.
     await this.brands.updateOne({ _id: order.brandId, commissionDueSince: null }, { $set: { commissionDueSince: new Date() } }, { session });
     return c;
+  }
+
+  /**
+   * Gives back the commission on refunded items, in proportion to their share of the order.
+   * A Fatrina coupon credit on those items is taken back the same way.
+   */
+  async reverseForReturn(
+    order: {
+      _id: Types.ObjectId;
+      brandId: Types.ObjectId;
+      orderNumber: string;
+      subtotal: number;
+      commission?: { amount: number };
+      coupon?: { code: string; discount: number; fundedBy: 'BRAND' | 'PLATFORM' };
+    },
+    itemsValue: number,
+    session: ClientSession,
+  ) {
+    const share = order.subtotal > 0 ? Math.min(1, itemsValue / order.subtotal) : 0;
+    const reversed = round2((order.commission?.amount ?? 0) * share);
+    const entries: Partial<LedgerEntry>[] = [];
+    if (reversed > 0) {
+      entries.push({ brandId: order.brandId, type: LedgerType.REVERSAL, amount: -reversed, orderId: order._id, orderNumber: order.orderNumber, note: 'عمولة منتجات مرتجعة' });
+    }
+    if (order.coupon?.fundedBy === 'PLATFORM') {
+      const couponBack = round2(order.coupon.discount * share);
+      if (couponBack > 0) {
+        entries.push({ brandId: order.brandId, type: LedgerType.ADJUSTMENT, amount: couponBack, orderId: order._id, orderNumber: order.orderNumber, note: `استرجاع خصم كوبون فاترينة ${order.coupon.code} على المرتجع` });
+      }
+    }
+    if (entries.length) await this.ledger.create(entries, { session, ordered: true });
+    return reversed;
   }
 
   async balance(brandId: string | Types.ObjectId) {

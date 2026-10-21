@@ -17,6 +17,8 @@ const ALLOWED: Record<FilePurpose, string[]> = {
   [FilePurpose.BRAND_LOGO]: IMAGE_TYPES,
   [FilePurpose.BRAND_COVER]: IMAGE_TYPES,
   [FilePurpose.PAYMENT_PROOF]: [...IMAGE_TYPES, 'application/pdf'],
+  [FilePurpose.REVIEW_IMAGE]: IMAGE_TYPES,
+  [FilePurpose.CLAIM_IMAGE]: IMAGE_TYPES,
 };
 const PRIVATE_PURPOSES = [FilePurpose.PAYMENT_PROOF];
 

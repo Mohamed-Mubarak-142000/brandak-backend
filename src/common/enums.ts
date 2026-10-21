@@ -60,6 +60,10 @@ export enum FilePurpose {
   BRAND_LOGO = 'BRAND_LOGO',
   BRAND_COVER = 'BRAND_COVER',
   PAYMENT_PROOF = 'PAYMENT_PROOF',
+  /** Customer photos on a review (public). */
+  REVIEW_IMAGE = 'REVIEW_IMAGE',
+  /** Photos attached to a return request or a support ticket. */
+  CLAIM_IMAGE = 'CLAIM_IMAGE',
 }
 
 export enum FileVisibility {

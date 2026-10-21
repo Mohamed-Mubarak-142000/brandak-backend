@@ -3,7 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { OrdersModule } from '@/orders/orders.module';
 import { UsersModule } from '@/users/users.module';
 import { Report, ReportSchema, Review, ReviewSchema } from './review.schema';
-import { AdminModerationController, ReviewsController } from './reviews.controller';
+import { AdminModerationController, BrandReviewsController, ReviewsController } from './reviews.controller';
 import { ReviewsService } from './reviews.service';
 
 @Module({
@@ -15,7 +15,7 @@ import { ReviewsService } from './reviews.service';
       { name: Report.name, schema: ReportSchema },
     ]),
   ],
-  controllers: [ReviewsController, AdminModerationController],
+  controllers: [ReviewsController, BrandReviewsController, AdminModerationController],
   providers: [ReviewsService],
 })
 export class ReviewsModule {}

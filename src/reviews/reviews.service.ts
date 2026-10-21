@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
-import { OrderStatus, ProductStatus, ReportStatus, ReportTarget, ReviewStatus } from '@/common/enums';
+import { OrderStatus, ProductStatus, ReportStatus, ReportTarget, ReviewStatus, FilePurpose } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { paginate, PageQueryDto, PageResult } from '@/common/pagination';
 import { AuditLogsService } from '@/audit-logs/audit-logs.service';
@@ -11,6 +11,9 @@ import { Product } from '@/products/product.schema';
 import { UsersService } from '@/users/users.service';
 import { Report, Review } from './review.schema';
 import { CreateReportDto, CreateReviewDto, ReportsQueryDto, ResolveReportDto } from './reviews.dto';
+import { UploadsService } from '@/uploads/uploads.service';
+import { NotificationsService } from '@/notifications/notifications.service';
+import { BrandMembersService } from '@/brands/brand-members.service';
 
 @Injectable()
 export class ReviewsService {
@@ -22,6 +25,9 @@ export class ReviewsService {
     @InjectModel(Brand.name) private readonly brands: Model<Brand>,
     private readonly users: UsersService,
     private readonly audit: AuditLogsService,
+    private readonly uploads: UploadsService,
+    private readonly notifications: NotificationsService,
+    private readonly members: BrandMembersService,
   ) {}
 
   async create(userId: string, productId: string, dto: CreateReviewDto) {
@@ -46,6 +52,13 @@ export class ReviewsService {
         orderId: order._id,
         rating: dto.rating,
         comment: dto.comment?.trim() ?? '',
+        images: dto.imageFileIds?.length ? await this.uploads.imageRefs(userId, dto.imageFileIds, FilePurpose.REVIEW_IMAGE) : [],
+      });
+      await this.notifications.notify(await this.members.memberUserIds(review.brandId), {
+        type: 'REVIEW_NEW',
+        title: `تقييم جديد ${review.rating}/5`,
+        body: review.comment ? review.comment.slice(0, 120) : 'عميل قيّم منتج من منتجاتك',
+        data: { productId: review.productId.toString(), reviewId: review.id },
       });
       await this.refreshRatings(review.productId, review.brandId);
       return this.toView(review.toObject());
@@ -225,6 +238,39 @@ export class ReviewsService {
     ]);
   }
 
+  /** The store answers a review publicly (once; it can edit the answer). */
+  async reply(brandId: string, id: string, text: string) {
+    const review = await this.reviews.findOneAndUpdate(
+      { _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null },
+      { $set: { reply: { text: text.trim(), at: new Date() } } },
+      { new: true },
+    );
+    if (!review) throw AppError.notFound('Review');
+    await this.notifications.notify(review.userId.toString(), {
+      type: 'REVIEW_REPLY',
+      title: 'المتجر رد على تقييمك',
+      body: text.slice(0, 120),
+      data: { productId: review.productId.toString() },
+    });
+    return this.toView(review.toObject());
+  }
+
+  /** Reviews of the store's products, newest first, for answering them. */
+  async listForBrand(brandId: string, query: PageQueryDto & { unanswered?: boolean }) {
+    const filter: Record<string, unknown> = { brandId: new Types.ObjectId(brandId), deletedAt: null };
+    if (query.unanswered) filter.reply = null;
+    const page = await paginate(this.reviews, filter, query, { sort: { createdAt: -1 } });
+    const titles = new Map(
+      (await this.products.find({ _id: { $in: page.items.map((r) => r.productId) } }).select('title').lean()).map((p) => [p._id.toString(), p.title]),
+    );
+    return new PageResult(
+      page.items.map((r) => ({ ...this.toView(r), productTitle: titles.get(r.productId.toString()) ?? '' })),
+      page.page,
+      page.limit,
+      page.total,
+    );
+  }
+
   private toView(r: Review & { _id: Types.ObjectId }) {
     return {
       id: r._id.toString(),
@@ -232,6 +278,8 @@ export class ReviewsService {
       userName: r.userName,
       rating: r.rating,
       comment: r.comment,
+      images: (r.images ?? []).map((i) => i.url),
+      reply: r.reply ?? null,
       verifiedPurchase: true,
       createdAt: r.createdAt,
     };

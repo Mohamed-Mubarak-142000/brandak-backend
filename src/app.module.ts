@@ -24,6 +24,10 @@ import { ProductsModule } from './products/products.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { CommissionsModule } from './commissions/commissions.module';
 import { PromotionsModule } from './promotions/promotions.module';
+import { QuestionsModule } from './questions/questions.module';
+import { ReturnsModule } from './returns/returns.module';
+import { SupportModule } from './support/support.module';
+import { AdsModule } from './ads/ads.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -79,6 +83,10 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     SubscriptionsModule,
     CommissionsModule,
     PromotionsModule,
+    QuestionsModule,
+    ReturnsModule,
+    SupportModule,
+    AdsModule,
     ProductsModule,
     AddressesModule,
     WishlistsModule,
