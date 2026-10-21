@@ -1,9 +1,8 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
-import { OrderPaymentMethod, OrderStatus, ProductStatus } from '@/common/enums';
+import { OrderPaymentMethod, OrderStatus, OtpPurpose, ProductStatus } from '@/common/enums';
 import { AppError, ErrorDetail } from '@/common/errors';
-import { cairoMonthStart } from '@/common/utils/month';
 import { withTransaction } from '@/common/utils/transaction';
 import { AddressesService, toView as addressView } from '@/addresses/addresses.service';
 import { BrandDocument } from '@/brands/brand.schema';
@@ -12,8 +11,11 @@ import { BrandsService } from '@/brands/brands.service';
 import { CartsService } from '@/carts/carts.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Product } from '@/products/product.schema';
-import { SubscriptionsService } from '@/subscriptions/subscriptions.service';
+import { OtpService } from '@/auth/otp.service';
+import { CommissionsService } from '@/commissions/commissions.service';
 import { UsersService } from '@/users/users.service';
+import { BrandBlock } from './brand-block.schema';
+import { needsConfirmation } from './customer-trust';
 import { Counter, Order } from './order.schema';
 import { PlaceOrderDto, QuoteDto } from './orders.dto';
 import { computeQuote } from './pricing';
@@ -33,7 +35,9 @@ export class CheckoutService {
     private readonly users: UsersService,
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
-    private readonly subscriptions: SubscriptionsService,
+    private readonly commissions: CommissionsService,
+    private readonly otp: OtpService,
+    @InjectModel(BrandBlock.name) private readonly blocks: Model<BrandBlock>,
   ) {}
 
   /** Read-only preview with the same rules as placing the order. */
@@ -61,7 +65,12 @@ export class CheckoutService {
     if (existing) return this.ordersService.toView(existing);
 
     const brand = await this.orderableBrand(brandId);
-    const usage = await this.orderUsage(brand._id);
+    if (await this.blocks.exists({ brandId: brand._id, userId: new Types.ObjectId(userId) })) {
+      throw AppError.forbidden('ORDER_NOT_ALLOWED', 'This store cannot take your order');
+    }
+    // New customers, and those who refuse parcels, confirm the order with an email code first.
+    const confirm = needsConfirmation((await this.ordersService.trustFor(userId)).level);
+    const firstStatus = confirm ? OrderStatus.AWAITING_CONFIRMATION : OrderStatus.PENDING;
     const [user, address, cart] = await Promise.all([
       this.users.getById(userId),
       this.addresses.getOwned(userId, dto.addressId),
@@ -138,8 +147,8 @@ export class CheckoutService {
               discountTotal: totals.discountTotal,
               grandTotal: totals.grandTotal,
               paymentMethod: dto.paymentMethod ?? OrderPaymentMethod.COD,
-              status: OrderStatus.PENDING,
-              statusHistory: [{ status: OrderStatus.PENDING, at: now, by: user._id, actor: 'CUSTOMER' }],
+              status: firstStatus,
+              statusHistory: [{ status: firstStatus, at: now, by: user._id, actor: 'CUSTOMER' }],
               notes: dto.notes ?? '',
               idempotencyKey,
             },
@@ -158,27 +167,18 @@ export class CheckoutService {
       throw e;
     }
 
-    const sellers = await this.members.memberUserIds(brand._id);
-    await this.notifications.notify(sellers, {
-      type: 'ORDER_PLACED',
-      title: 'طلب جديد',
-      body: `طلب ${order.orderNumber} بقيمة ${order.grandTotal} ج.م`,
-      data: { orderId: order.id },
-    });
-    // Warn the store once at 80% of its monthly orders and once when it hits the limit.
-    if (usage.limit) {
-      const used = usage.used + 1;
-      if (used === usage.limit || used === Math.ceil(usage.limit * 0.8)) {
-        const full = used === usage.limit;
-        await this.notifications.notify(sellers, {
-          type: 'ORDER_LIMIT',
-          title: full ? 'وصلت لحد طلبات الشهر' : 'قربت من حد طلبات الشهر',
-          body: full
-            ? `استقبلت ${used} طلب الشهر ده، وده حد باقتك. متجرك مش هيستقبل طلبات جديدة لحد أول الشهر الجاي أو لحد ما تطوّر باقتك.`
-            : `استقبلت ${used} من ${usage.limit} طلب مسموحين في باقتك الشهر ده. طوّر باقتك عشان متوقفش.`,
-          data: { used: String(used), limit: String(usage.limit) },
-        });
-      }
+    if (confirm) {
+      // Several stores can be checked out back to back; one code (still valid) confirms them all.
+      await this.otp.issue(userId, OtpPurpose.CONFIRM_ORDER, 'email', user.email).catch((e) => {
+        if (e?.code !== 'OTP_COOLDOWN') throw e;
+      });
+    } else {
+      await this.notifications.notify(await this.members.memberUserIds(brand._id), {
+        type: 'ORDER_PLACED',
+        title: 'طلب جديد',
+        body: `طلب ${order.orderNumber} بقيمة ${order.grandTotal} ج.م`,
+        data: { orderId: order.id },
+      });
     }
     return this.ordersService.toView(order.toObject());
   }
@@ -189,24 +189,9 @@ export class CheckoutService {
     if (!brand.settings.acceptsOrders) {
       throw AppError.unprocessable('BRAND_NOT_ACCEPTING_ORDERS', 'This brand is not accepting orders right now');
     }
-    const { used, limit } = await this.orderUsage(brand._id);
-    if (limit != null && used >= limit) {
-      throw AppError.unprocessable('STORE_ORDER_LIMIT', 'This store reached its monthly order limit');
-    }
+    // A store that owes too much commission (or for too long) pauses until it settles.
+    await this.commissions.assertCanReceiveOrders(brand._id);
     return brand;
-  }
-
-  /** Orders this calendar month (Cairo time) that count against the plan; cancelled ones don't. */
-  async orderUsage(brandId: Types.ObjectId) {
-    const current = await this.subscriptions.currentFor(brandId);
-    const limit = current?.planSnapshot.limits.maxOrdersPerMonth ?? null;
-    if (limit == null) return { used: 0, limit: null };
-    const used = await this.orders.countDocuments({
-      brandId,
-      createdAt: { $gte: cairoMonthStart() },
-      status: { $ne: OrderStatus.CANCELLED },
-    });
-    return { used, limit };
   }
 
   private cartIssues(details: ErrorDetail[]) {

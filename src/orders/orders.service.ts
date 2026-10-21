@@ -1,29 +1,36 @@
 import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, FilterQuery, Model, Types } from 'mongoose';
-import { OrderStatus } from '@/common/enums';
+import { OrderStatus, OtpPurpose } from '@/common/enums';
 
 /** Only finished orders can be deleted, so stock and the order flow are never left half-way. */
-const DELETABLE: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED];
+const DELETABLE: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUSED];
 import { AppError } from '@/common/errors';
 import { Lean, paginate, PageResult } from '@/common/pagination';
 import { escapeRegex, normalizeEgyptPhone } from '@/common/utils/text';
 import { withTransaction } from '@/common/utils/transaction';
 import { AuditLogsService } from '@/audit-logs/audit-logs.service';
+import { OtpService } from '@/auth/otp.service';
+import { CommissionsService } from '@/commissions/commissions.service';
+import { UsersService } from '@/users/users.service';
 import { BrandMembersService } from '@/brands/brand-members.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { Product } from '@/products/product.schema';
+import { BrandBlock } from './brand-block.schema';
 import { Order } from './order.schema';
-import { allowedNext, canTransition, OrderActor, restocksOnCancel } from './order-state';
+import { CustomerTrust, trustLevel } from './customer-trust';
+import { allowedNext, canTransition, OrderActor, restocks } from './order-state';
 import { AdminOrdersQueryDto, BrandOrdersQueryDto, OrdersQueryDto } from './orders.dto';
 
 const STATUS_AR: Record<OrderStatus, string> = {
+  AWAITING_CONFIRMATION: 'مستني تأكيدك',
   PENDING: 'قيد المراجعة',
   CONFIRMED: 'تم التأكيد',
   PROCESSING: 'قيد التجهيز',
   SHIPPED: 'تم الشحن',
   DELIVERED: 'تم التسليم',
   CANCELLED: 'ملغي',
+  REFUSED: 'رفض الاستلام',
 };
 
 @Injectable()
@@ -31,10 +38,14 @@ export class OrdersService {
   constructor(
     @InjectModel(Order.name) private readonly orders: Model<Order>,
     @InjectModel(Product.name) private readonly products: Model<Product>,
+    @InjectModel(BrandBlock.name) private readonly blocks: Model<BrandBlock>,
     @InjectConnection() private readonly connection: Connection,
     private readonly members: BrandMembersService,
     private readonly audit: AuditLogsService,
     private readonly notifications: NotificationsService,
+    private readonly commissions: CommissionsService,
+    private readonly otp: OtpService,
+    private readonly users: UsersService,
   ) {}
 
   // ---------- Customer ----------
@@ -62,13 +73,99 @@ export class OrdersService {
   // ---------- Brand ----------
 
   listForBrand(brandId: string, query: BrandOrdersQueryDto) {
-    return this.page(this.searchFilter({ brandId: new Types.ObjectId(brandId), deletedAt: null }, query), query, 'BRAND');
+    // Orders still waiting for the customer's confirmation are not the store's business yet.
+    const base: FilterQuery<Order> = { brandId: new Types.ObjectId(brandId), deletedAt: null, status: { $ne: OrderStatus.AWAITING_CONFIRMATION } };
+    return this.page(this.searchFilter(base, query), query, 'BRAND');
   }
 
   async getForBrand(brandId: string, id: string) {
-    const order = await this.orders.findOne({ _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null }).lean();
+    const order = await this.orders
+      .findOne({ _id: id, brandId: new Types.ObjectId(brandId), deletedAt: null, status: { $ne: OrderStatus.AWAITING_CONFIRMATION } })
+      .lean();
     if (!order) throw AppError.notFound('Order');
-    return this.toView(order, 'BRAND');
+    return { ...this.toView(order, 'BRAND'), customerTrust: await this.trustFor(order.userId) };
+  }
+
+  async blockCustomer(userId: string, brandId: string, orderId: string, note?: string) {
+    const order = await this.orders.findOne({ _id: orderId, brandId: new Types.ObjectId(brandId) }).lean();
+    if (!order) throw AppError.notFound('Order');
+    await this.blocks.updateOne(
+      { brandId: order.brandId, userId: order.userId },
+      { $setOnInsert: { customer: order.customer, note: note ?? '', createdBy: new Types.ObjectId(userId) } },
+      { upsert: true },
+    );
+    return this.listBlocks(brandId);
+  }
+
+  async listBlocks(brandId: string) {
+    const rows = await this.blocks.find({ brandId: new Types.ObjectId(brandId) }).sort({ createdAt: -1 }).lean();
+    return rows.map((b) => ({ id: b._id.toString(), customer: b.customer, note: b.note, createdAt: b.createdAt }));
+  }
+
+  async unblock(brandId: string, id: string) {
+    await this.blocks.deleteOne({ _id: id, brandId: new Types.ObjectId(brandId) });
+  }
+
+  /** Delivered vs refused orders of a customer across all stores (counts only). */
+  async trustFor(userId: Types.ObjectId | string): Promise<CustomerTrust> {
+    const rows = await this.orders.aggregate<{ _id: OrderStatus; n: number }>([
+      { $match: { userId: new Types.ObjectId(String(userId)), status: { $in: [OrderStatus.DELIVERED, OrderStatus.REFUSED] } } },
+      { $group: { _id: '$status', n: { $sum: 1 } } },
+    ]);
+    const delivered = rows.find((x) => x._id === OrderStatus.DELIVERED)?.n ?? 0;
+    const refused = rows.find((x) => x._id === OrderStatus.REFUSED)?.n ?? 0;
+    return { delivered, refused, level: trustLevel(delivered, refused) };
+  }
+
+  /**
+   * One code confirms every order the customer is holding (several stores can be checked out
+   * back to back). Confirmed orders then reach their stores like any new order.
+   */
+  async confirmPending(userId: string, code: string) {
+    await this.otp.consume(userId, OtpPurpose.CONFIRM_ORDER, code);
+    const waiting = await this.orders.find({ userId: new Types.ObjectId(userId), status: OrderStatus.AWAITING_CONFIRMATION, deletedAt: null }).lean();
+    const confirmed = [];
+    for (const o of waiting) {
+      confirmed.push(
+        await this.changeStatus({ _id: o._id, status: OrderStatus.AWAITING_CONFIRMATION }, OrderStatus.PENDING, {
+          actor: 'CUSTOMER',
+          userId,
+          note: 'أكد الطلب بالكود',
+        }),
+      );
+      await this.notifications.notify(await this.members.memberUserIds(o.brandId), {
+        type: 'ORDER_PLACED',
+        title: 'طلب جديد',
+        body: `طلب ${o.orderNumber} بقيمة ${o.grandTotal} ج.م`,
+        data: { orderId: o._id.toString() },
+      });
+    }
+    return confirmed;
+  }
+
+  /** Sends a fresh confirmation code (subject to the usual one-minute cooldown). */
+  async resendConfirmation(userId: string) {
+    const user = await this.users.getById(userId);
+    if (!(await this.orders.exists({ userId: user._id, status: OrderStatus.AWAITING_CONFIRMATION }))) {
+      throw AppError.unprocessable('NOTHING_TO_CONFIRM', 'No order is waiting for confirmation');
+    }
+    await this.otp.issue(userId, OtpPurpose.CONFIRM_ORDER, 'email', user.email);
+  }
+
+  /** Cancels orders nobody confirmed within a day and puts their stock back. */
+  async expireUnconfirmed(now = new Date()) {
+    const stale = await this.orders
+      .find({ status: OrderStatus.AWAITING_CONFIRMATION, createdAt: { $lte: new Date(now.getTime() - 24 * 3_600_000) } })
+      .select('_id userId')
+      .lean();
+    for (const o of stale) {
+      await this.changeStatus({ _id: o._id, status: OrderStatus.AWAITING_CONFIRMATION }, OrderStatus.CANCELLED, {
+        actor: 'SYSTEM',
+        userId: o.userId.toString(),
+        note: 'اتلغى تلقائياً لأنه متأكدش خلال 24 ساعة',
+      }).catch(() => undefined);
+    }
+    return stale.length;
   }
 
   updateByBrand(userId: string, brandId: string, id: string, status: OrderStatus, note?: string) {
@@ -184,7 +281,12 @@ export class OrdersService {
       );
       if (!result) throw AppError.conflict('CONCURRENT_UPDATE', 'The order was updated by someone else, please retry');
 
-      if (to === OrderStatus.CANCELLED && restocksOnCancel(from)) {
+      if (to === OrderStatus.DELIVERED) {
+        const commission = await this.commissions.recordForOrder(result, session);
+        result.commission = commission;
+        await this.orders.updateOne({ _id: result._id }, { $set: { commission } }, { session });
+      }
+      if (restocks(from, to)) {
         for (const item of order.items) {
           // Variants deleted since the order simply don't match; nothing to restock.
           await this.products.updateOne(
@@ -198,7 +300,7 @@ export class OrdersService {
         await this.audit.log(
           {
             actorId: by.userId,
-            actorType: by.actor === 'ADMIN' ? 'ADMIN' : 'USER',
+            actorType: by.actor === 'ADMIN' ? 'ADMIN' : by.actor === 'SYSTEM' ? 'SYSTEM' : 'USER',
             action: 'ORDER_STATUS_CHANGED',
             entityType: 'Order',
             entityId: order._id,
@@ -222,7 +324,12 @@ export class OrdersService {
       data: { orderId: order._id.toString(), status: order.status },
     };
     if (actor !== 'CUSTOMER') await this.notifications.notify(order.userId.toString(), payload);
-    if (actor !== 'BRAND') await this.notifications.notify(await this.members.memberUserIds(order.brandId), payload);
+    // The store never heard of an order that was still waiting for the customer's confirmation,
+    // and gets its own "new order" notice when it is confirmed.
+    const storeKnows = order.statusHistory.some((h) => h.status === OrderStatus.PENDING);
+    if (actor !== 'BRAND' && storeKnows && order.status !== OrderStatus.PENDING) {
+      await this.notifications.notify(await this.members.memberUserIds(order.brandId), payload);
+    }
   }
 
   private searchFilter(base: FilterQuery<Order>, query: BrandOrdersQueryDto): FilterQuery<Order> {
@@ -276,6 +383,7 @@ export class OrdersService {
       notes: order.notes,
       cancelReason: order.cancelReason ?? null,
       deliveredAt: order.deliveredAt ?? null,
+      commission: actor === 'CUSTOMER' ? undefined : (order.commission ?? null),
       history: order.statusHistory.map((h) => ({ status: h.status, at: h.at, actor: h.actor, note: h.note ?? null })),
       allowedNextStatuses: allowedNext(order.status, actor),
     };

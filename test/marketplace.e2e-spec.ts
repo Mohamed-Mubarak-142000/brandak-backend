@@ -1,14 +1,15 @@
 import { getModelToken } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Brand } from '@/brands/brand.schema';
-import { SubscriptionJobs } from '@/subscriptions/subscription-jobs';
+import { OrdersService } from '@/orders/orders.service';
 import { auth, createTestApp, loginAdmin, registerUser, TestContext, upload } from './helpers';
 
 /**
- * Full marketplace journey: brand onboarding → InstaPay subscription review → catalog →
- * per-brand cart → checkout → fulfilment → review, plus the security rules around each step.
+ * Full marketplace journey: store onboarding → catalog → per-store cart → checkout (with email
+ * confirmation for new customers) → fulfilment → 5% commission on delivery → settlement, plus
+ * the security rules around each step.
  */
-describe('Brandak marketplace (e2e)', () => {
+describe('Fatrina marketplace (e2e)', () => {
   let ctx: TestContext;
   let admin: string;
   let categoryId: string;
@@ -29,8 +30,8 @@ describe('Brandak marketplace (e2e)', () => {
     await ctx?.close();
   });
 
-  /** Creates a brand, gets it approved and pays for a plan; returns the owner token and ids. */
-  async function onboardBrand(name: string, opts: { planId?: string; reference?: string; storeType?: string } = {}) {
+  /** Opens a store and gets it approved (no plan or payment: the platform takes a commission). */
+  async function onboardBrand(name: string, opts: { storeType?: string } = {}) {
     const owner = await registerUser(ctx, `${name} Owner`);
     const logoFileId = await upload(ctx, owner.token, 'BRAND_LOGO');
     const applied = await ctx
@@ -47,21 +48,6 @@ describe('Brandak marketplace (e2e)', () => {
       .set(auth(owner.token))
       .send({ settings: { shippingZones: [{ governorate: 'CAI', fee: 50 }], defaultShippingFee: null } })
       .expect(200);
-
-    const sub = await ctx
-      .http()
-      .post(api('/brand/subscriptions'))
-      .set(auth(owner.token))
-      .send({ planId: opts.planId ?? growthPlanId, billingPeriod: 'MONTHLY' })
-      .expect(201);
-    const proofFileId = await upload(ctx, owner.token, 'PAYMENT_PROOF');
-    const proof = await ctx
-      .http()
-      .post(api(`/brand/subscriptions/${sub.body.data.subscription._id}/payment-proofs`))
-      .set(auth(owner.token))
-      .send({ proofFileId, transactionReference: opts.reference ?? `REF-${name}-${Date.now()}` })
-      .expect(200);
-    await ctx.http().post(api(`/admin/payments/${proof.body.data.id}/approve`)).set(auth(admin)).send({}).expect(200);
     return { owner, brandId, slug: applied.body.data.slug as string };
   }
 
@@ -85,6 +71,9 @@ describe('Brandak marketplace (e2e)', () => {
       });
     return res;
   }
+
+  /** The latest emailed code (tests run without SMTP, so codes land in the log channel). */
+  const lastCode = () => ctx.contact.sent.at(-1)!.message.match(/\d{6}/)![0];
 
   // ---------------------------------------------------------------- Auth
 
@@ -187,10 +176,10 @@ describe('Brandak marketplace (e2e)', () => {
     });
   });
 
-  // ---------------------------------------------------------------- Brand onboarding & subscription
+  // ---------------------------------------------------------------- Store onboarding
 
-  describe('brand onboarding and InstaPay subscription', () => {
-    it('runs the full review flow and only shows the brand once paid', async () => {
+  describe('store onboarding', () => {
+    it('shows a store as soon as it is approved, with no plan or payment', async () => {
       const owner = await registerUser(ctx, 'Noura');
       const applied = await ctx
         .http()
@@ -208,68 +197,31 @@ describe('Brandak marketplace (e2e)', () => {
         .send({ storeType: 'SHOP', name: 'Second', categoryIds: [categoryId], contact: { phone: '01011112222' } })
         .expect(409);
 
-      // Not public before approval and payment.
+      // Not public before approval.
       await ctx.http().get(api(`/brands/${brand.slug}`)).expect(404);
-
       await ctx.http().post(api(`/admin/brands/${brand.id}/approve`)).set(auth(admin)).expect(200);
       await ctx.http().post(api(`/admin/brands/${brand.id}/approve`)).set(auth(admin)).expect(409);
-      await ctx.http().get(api(`/brands/${brand.slug}`)).expect(404); // approved but unpaid
-
-      const sub = await ctx
-        .http()
-        .post(api('/brand/subscriptions'))
-        .set(auth(owner.token))
-        .send({ planId: growthPlanId, billingPeriod: 'MONTHLY' })
-        .expect(201);
-      expect(sub.body.data.payment).toMatchObject({ amount: 199, status: 'AWAITING_PROOF' });
-      expect(sub.body.data.instructions).toMatchObject({ receiver: '01050867135', amount: 199 });
-
-      const proofFileId = await upload(ctx, owner.token, 'PAYMENT_PROOF');
-      const subscriptionId = sub.body.data.subscription._id;
-      const proof = await ctx
-        .http()
-        .post(api(`/brand/subscriptions/${subscriptionId}/payment-proofs`))
-        .set(auth(owner.token))
-        .send({ proofFileId, transactionReference: 'IP-778899', senderName: 'Noura' })
-        .expect(200);
-      expect(proof.body.data.status).toBe('PENDING_REVIEW');
-
-      // Uploading a proof never activates anything by itself.
-      await ctx.http().get(api(`/brands/${brand.slug}`)).expect(404);
-
-      const queue = await ctx.http().get(api('/admin/payments?status=PENDING_REVIEW')).set(auth(admin)).expect(200);
-      expect(queue.body.data.map((p: any) => p._id)).toContain(proof.body.data.id);
-      const proofUrl = await ctx.http().get(api(`/admin/payments/${proof.body.data.id}/proof-url`)).set(auth(admin)).expect(200);
-      expect(proofUrl.body.data.url).toContain('/api/v1/files/private?token=');
-
-      // Client-sent amounts are not accepted at all.
-      await ctx
-        .http()
-        .post(api(`/admin/payments/${proof.body.data.id}/approve`))
-        .set(auth(admin))
-        .send({ amount: 1 })
-        .expect(400);
-      const approved = await ctx
-        .http()
-        .post(api(`/admin/payments/${proof.body.data.id}/approve`))
-        .set(auth(admin))
-        .send({ reviewNote: 'Verified in bank app' })
-        .expect(200);
-      expect(approved.body.data.subscription.status).toBe('ACTIVE');
-      await ctx.http().post(api(`/admin/payments/${proof.body.data.id}/approve`)).set(auth(admin)).send({}).expect(409);
 
       const pub = await ctx.http().get(api(`/brands/${brand.slug}`)).expect(200);
       expect(pub.body.data).toMatchObject({ name: 'Noura Handmade', shipping: expect.any(Object) });
       const latin = await ctx.http().get(api('/brands?q=noura')).expect(200);
       expect(latin.body.data.map((b: any) => b.id)).toContain(brand.id);
 
-      const mine = await ctx.http().get(api('/brand/subscriptions/me')).set(auth(owner.token)).expect(200);
-      expect(mine.body.data.current.planSnapshot.code).toBe('GROWTH');
+      // Publishing needs no subscription any more.
+      const p = await createProduct(owner.token);
+      expect(p.status).toBe(201);
 
-      const logs = await ctx.http().get(api(`/admin/audit-logs?entityId=${proof.body.data.id}`)).set(auth(admin)).expect(200);
-      expect(logs.body.data.map((l: any) => l.action)).toEqual(
-        expect.arrayContaining(['PAYMENT_APPROVED', 'PAYMENT_PROOF_SUBMITTED', 'PAYMENT_PROOF_VIEWED']),
-      );
+      // Older apps still send a planId; it is accepted and ignored.
+      const legacy = await registerUser(ctx);
+      await ctx
+        .http()
+        .post(api('/brand-applications'))
+        .set(auth(legacy.token))
+        .send({ planId: growthPlanId, storeType: 'BRAND', name: 'Legacy App Store', categoryIds: [categoryId], contact: { phone: '01011112222' } })
+        .expect(201);
+
+      const terms = await ctx.http().get(api('/platform/terms')).expect(200);
+      expect(terms.body.data).toMatchObject({ commissionRate: 0.05, settlementDays: 14, maxUnpaidBalance: 2000 });
     });
 
     it('requires a store type and filters stores by it, counting legacy stores as brands', async () => {
@@ -312,118 +264,18 @@ describe('Brandak marketplace (e2e)', () => {
       expect((await slugs()).length).toBeGreaterThan(warehouse.length);
       await ctx.http().get(api('/categories?storeType=NOPE')).expect(400);
     });
-
-    it('rejects a reused transfer reference and lets the owner resubmit after rejection', async () => {
-      const first = await onboardBrand('Ref Brand A', { reference: 'SAME-REF-001' });
-      expect(first.brandId).toBeDefined();
-
-      const owner = await registerUser(ctx);
-      const applied = await ctx
-        .http()
-        .post(api('/brand-applications'))
-        .set(auth(owner.token))
-        .send({ storeType: 'BRAND', name: 'Ref Brand B', categoryIds: [categoryId], contact: { phone: '01011112222' } })
-        .expect(201);
-      const sub = await ctx
-        .http()
-        .post(api('/brand/subscriptions'))
-        .set(auth(owner.token))
-        .send({ planId: growthPlanId, billingPeriod: 'YEARLY' })
-        .expect(201);
-      expect(sub.body.data.payment.amount).toBe(1990);
-      const subId = sub.body.data.subscription._id;
-      const proofFileId = await upload(ctx, owner.token, 'PAYMENT_PROOF');
-
-      const reused = await ctx
-        .http()
-        .post(api(`/brand/subscriptions/${subId}/payment-proofs`))
-        .set(auth(owner.token))
-        .send({ proofFileId, transactionReference: 'same ref 001' })
-        .expect(409);
-      expect(reused.body.error.code).toBe('REFERENCE_ALREADY_USED');
-
-      const p = await ctx
-        .http()
-        .post(api(`/brand/subscriptions/${subId}/payment-proofs`))
-        .set(auth(owner.token))
-        .send({ proofFileId, transactionReference: 'B-REF-1' })
-        .expect(200);
-      await ctx.http().post(api(`/admin/payments/${p.body.data.id}/reject`)).set(auth(admin)).send({ reason: 'Amount not received' }).expect(200);
-      const resubmitted = await ctx
-        .http()
-        .post(api(`/brand/subscriptions/${subId}/payment-proofs`))
-        .set(auth(owner.token))
-        .send({ proofFileId, transactionReference: 'B-REF-2' })
-        .expect(200);
-      expect(resubmitted.body.data.status).toBe('PENDING_REVIEW');
-      expect(applied.body.data.id).toBeDefined();
-
-      // Someone else's uploaded file can't be used as proof.
-      const stranger = await registerUser(ctx);
-      const foreignFile = await upload(ctx, stranger.token, 'PAYMENT_PROOF');
-      await ctx
-        .http()
-        .post(api(`/admin/payments/${p.body.data.id}/reject`))
-        .set(auth(admin))
-        .send({ reason: 'Blurry image' })
-        .expect(200);
-      await ctx
-        .http()
-        .post(api(`/brand/subscriptions/${subId}/payment-proofs`))
-        .set(auth(owner.token))
-        .send({ proofFileId: foreignFile, transactionReference: 'B-REF-3' })
-        .expect(422);
-    });
-
-    it('extends an early renewal from the end of the current period', async () => {
-      const { owner } = await onboardBrand('Renew Brand');
-      const before = await ctx.http().get(api('/brand/subscriptions/me')).set(auth(owner.token)).expect(200);
-      const paidUntil = new Date(before.body.data.paidUntil).getTime();
-
-      const sub = await ctx
-        .http()
-        .post(api('/brand/subscriptions'))
-        .set(auth(owner.token))
-        .send({ planId: growthPlanId, billingPeriod: 'MONTHLY' })
-        .expect(201);
-      expect(sub.body.data.subscription.renewalOf).toBeDefined();
-      const proofFileId = await upload(ctx, owner.token, 'PAYMENT_PROOF');
-      const p = await ctx
-        .http()
-        .post(api(`/brand/subscriptions/${sub.body.data.subscription._id}/payment-proofs`))
-        .set(auth(owner.token))
-        .send({ proofFileId, transactionReference: 'RENEW-1' })
-        .expect(200);
-      const approved = await ctx.http().post(api(`/admin/payments/${p.body.data.id}/approve`)).set(auth(admin)).send({}).expect(200);
-      expect(new Date(approved.body.data.subscription.startsAt).getTime()).toBe(paidUntil);
-      expect(new Date(approved.body.data.subscription.endsAt).getTime()).toBe(paidUntil + 30 * 86_400_000);
-    });
   });
 
   // ---------------------------------------------------------------- Catalog
 
   describe('catalog', () => {
-    it('enforces plan limits and isolates brands from each other', async () => {
-      const plan = await ctx
-        .http()
-        .post(api('/admin/plans'))
-        .set(auth(admin))
-        .send({ code: 'TINY', nameAr: 'تجربة', nameEn: 'Tiny', priceMonthly: 10, priceYearly: 100, limits: { maxActiveProducts: 1 } })
-        .expect(201);
-      const a = await onboardBrand('Tiny Brand', { planId: plan.body.data._id });
-      const b = await onboardBrand('Other Brand');
-
+    it('isolates stores from each other', async () => {
+      const a = await onboardBrand('Store A');
+      const b = await onboardBrand('Store B');
       const p1 = await createProduct(a.owner.token);
       expect(p1.status).toBe(201);
-      const p2 = await createProduct(a.owner.token);
-      expect(p2.status).toBe(422);
-      expect(p2.body.error.code).toBe('PLAN_LIMIT_REACHED');
-      // Drafts are fine; publishing them is not.
-      const draft = await createProduct(a.owner.token, { status: 'DRAFT' });
-      expect(draft.status).toBe(201);
-      await ctx.http().patch(api(`/brand/products/${draft.body.data._id}`)).set(auth(a.owner.token)).send({ status: 'ACTIVE' }).expect(422);
 
-      // Brand B can neither read nor change brand A's product.
+      // Store B can neither read nor change store A's product.
       const id = p1.body.data._id;
       await ctx.http().get(api(`/brand/products/${id}`)).set(auth(b.owner.token)).expect(404);
       await ctx.http().patch(api(`/brand/products/${id}`)).set(auth(b.owner.token)).send({ price: 1 }).expect(404);
@@ -431,7 +283,7 @@ describe('Brandak marketplace (e2e)', () => {
       // A brandId in the body is rejected, not trusted.
       await createProduct(b.owner.token, { brandId: a.brandId }).then((r) => expect(r.status).toBe(400));
 
-      // Customers without a brand can't reach brand routes at all.
+      // Customers without a store can't reach store routes at all.
       const customer = await registerUser(ctx);
       const denied = await ctx.http().get(api('/brand/products')).set(auth(customer.token)).expect(403);
       expect(denied.body.error.code).toBe('NO_BRAND');
@@ -494,6 +346,24 @@ describe('Brandak marketplace (e2e)', () => {
       const res = await ctx.http().get(api(`/brand/products/${product._id}`)).set(auth(shop.owner.token)).expect(200);
       return res.body.data.variants[i].stock as number;
     };
+    /** Confirms whatever the customer is holding with the emailed code, if anything. */
+    const confirmIfNeeded = async (status: string) => {
+      if (status === 'AWAITING_CONFIRMATION') {
+        await ctx.http().post(api('/orders/me/confirm')).set(auth(customer.token)).send({ code: lastCode() }).expect(200);
+      }
+    };
+
+    it('keeps store accounts out of shopping', async () => {
+      const denied = await ctx
+        .http()
+        .post(api(`/carts/${other.brandId}/items`))
+        .set(auth(shop.owner.token))
+        .send({ productId: product._id, variantId: variant(0), quantity: 1 })
+        .expect(403);
+      expect(denied.body.error.code).toBe('SELLER_ACCOUNT');
+      await ctx.http().get(api('/wishlists/me')).set(auth(shop.owner.token)).expect(403);
+      await ctx.http().post(api(`/checkout/${other.brandId}/quote`)).set(auth(shop.owner.token)).send({ addressId }).expect(403);
+    });
 
     it('keeps one cart per brand and validates items against that brand', async () => {
       await ctx
@@ -519,7 +389,7 @@ describe('Brandak marketplace (e2e)', () => {
       expect(carts.body.data).toHaveLength(1);
     });
 
-    it('quotes on the server and places an idempotent order that decrements stock', async () => {
+    it('holds a new customer\'s order until it is confirmed with the emailed code', async () => {
       const quote = await ctx
         .http()
         .post(api(`/checkout/${shop.brandId}/quote`))
@@ -547,8 +417,15 @@ describe('Brandak marketplace (e2e)', () => {
         .set('Idempotency-Key', 'order-1')
         .send({ addressId, expectedTotal: 750 })
         .expect(201);
-      expect(first.body.data).toMatchObject({ status: 'PENDING', grandTotal: 750, paymentMethod: 'COD' });
+      // Mona has never received an order, so she confirms this one first.
+      expect(first.body.data).toMatchObject({ status: 'AWAITING_CONFIRMATION', grandTotal: 750, paymentMethod: 'COD' });
       expect(first.body.data.orderNumber).toMatch(/^BR-\d{6}$/);
+      expect(await stockOf(0)).toBe(3); // stock is held meanwhile
+
+      // The store doesn't see it yet.
+      const before = await ctx.http().get(api('/brand/orders')).set(auth(shop.owner.token)).expect(200);
+      expect(before.body.data.map((o: any) => o.id)).not.toContain(first.body.data.id);
+      await ctx.http().get(api(`/brand/orders/${first.body.data.id}`)).set(auth(shop.owner.token)).expect(404);
 
       const retry = await ctx
         .http()
@@ -561,6 +438,43 @@ describe('Brandak marketplace (e2e)', () => {
       expect(await stockOf(0)).toBe(3);
       const carts = await ctx.http().get(api('/carts')).set(auth(customer.token)).expect(200);
       expect(carts.body.data).toHaveLength(0);
+
+      const code = lastCode();
+      await ctx.http().post(api('/orders/me/confirm')).set(auth(customer.token)).send({ code: code === '000000' ? '111111' : '000000' }).expect(400);
+      const confirmed = await ctx.http().post(api('/orders/me/confirm')).set(auth(customer.token)).send({ code }).expect(200);
+      expect(confirmed.body.data.map((o: any) => o.status)).toEqual(['PENDING']);
+
+      // Now it reached the store, with the customer's track record.
+      const seen = await ctx.http().get(api(`/brand/orders/${first.body.data.id}`)).set(auth(shop.owner.token)).expect(200);
+      expect(seen.body.data.customerTrust).toEqual({ delivered: 0, refused: 0, level: 'NEW' });
+      const notes = await ctx.http().get(api('/notifications/me')).set(auth(shop.owner.token)).expect(200);
+      expect(notes.body.data.some((n: any) => n.type === 'ORDER_PLACED')).toBe(true);
+    });
+
+    it('cancels orders nobody confirmed within a day and releases their stock', async () => {
+      const buyer = await registerUser(ctx, 'Late Buyer');
+      const addr = await ctx
+        .http()
+        .post(api('/addresses/me'))
+        .set(auth(buyer.token))
+        .send({ recipientName: 'Late', phone: '01022224444', governorate: 'CAI', city: 'Maadi', street: '9 Road', location: { lat: 30, lng: 31 } })
+        .expect(201);
+      await ctx.http().post(api(`/carts/${shop.brandId}/items`)).set(auth(buyer.token)).send({ productId: product._id, variantId: variant(0), quantity: 1 }).expect(201);
+      const before = await stockOf(0);
+      const order = await ctx
+        .http()
+        .post(api(`/checkout/${shop.brandId}/orders`))
+        .set(auth(buyer.token))
+        .set('Idempotency-Key', 'late-1')
+        .send({ addressId: addr.body.data.id })
+        .expect(201);
+      expect(order.body.data.status).toBe('AWAITING_CONFIRMATION');
+      expect(await stockOf(0)).toBe(before - 1);
+
+      await ctx.app.get(OrdersService).expireUnconfirmed(new Date(Date.now() + 25 * 3_600_000));
+      const after = await ctx.http().get(api(`/orders/me/${order.body.data.id}`)).set(auth(buyer.token)).expect(200);
+      expect(after.body.data.status).toBe('CANCELLED');
+      expect(await stockOf(0)).toBe(before);
     });
 
     it('never oversells: a checkout exceeding stock fails without touching inventory', async () => {
@@ -595,7 +509,7 @@ describe('Brandak marketplace (e2e)', () => {
       await ctx.http().delete(api(`/carts/${shop.brandId}`)).set(auth(customer.token)).expect(204);
     });
 
-    it('moves orders through the lifecycle, restocks on cancel, and allows reviews after delivery', async () => {
+    it('moves orders through the lifecycle, charges 5% on delivery, and allows reviews after it', async () => {
       const place = async (key: string) => {
         await ctx
           .http()
@@ -610,6 +524,7 @@ describe('Brandak marketplace (e2e)', () => {
           .set('Idempotency-Key', key)
           .send({ addressId })
           .expect(201);
+        await confirmIfNeeded(res.body.data.status);
         return res.body.data.id as string;
       };
       const setStatus = (id: string, status: string, note?: string) =>
@@ -629,6 +544,14 @@ describe('Brandak marketplace (e2e)', () => {
       await setStatus(orderId, 'SHIPPED').expect(200);
       const delivered = await setStatus(orderId, 'DELIVERED').expect(200);
       expect(delivered.body.data).toMatchObject({ status: 'DELIVERED', paymentStatus: 'PAID', allowedNextStatuses: [] });
+      // 5% of the items (350), never of shipping.
+      expect(delivered.body.data.commission).toEqual({ rate: 0.05, base: 350, amount: 17.5 });
+      const owed = await ctx.http().get(api('/brand/commissions')).set(auth(shop.owner.token)).expect(200);
+      expect(owed.body.data).toMatchObject({ balance: 17.5, blocked: false });
+      expect(owed.body.data.dueBy).toBeDefined();
+      // The customer never sees the store's commission.
+      const mine = await ctx.http().get(api(`/orders/me/${orderId}`)).set(auth(customer.token)).expect(200);
+      expect(mine.body.data.commission).toBeUndefined();
 
       // Soft delete hides the order from the customer, the store and the admin list; restore brings it back.
       await ctx.http().post(api(`/admin/orders/${orderId}/delete`)).set(auth(admin)).expect(200);
@@ -638,7 +561,14 @@ describe('Brandak marketplace (e2e)', () => {
       expect(deletedOrders.body.data.map((o: any) => o.id)).toContain(orderId);
       await ctx.http().post(api(`/admin/orders/${orderId}/restore`)).set(auth(admin)).expect(200);
       await ctx.http().get(api(`/orders/me/${orderId}`)).set(auth(customer.token)).expect(200);
-      expect(delivered.body.data.history.map((h: any) => h.status)).toEqual(['PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED', 'DELIVERED']);
+      expect(delivered.body.data.history.map((h: any) => h.status)).toEqual([
+        'AWAITING_CONFIRMATION',
+        'PENDING',
+        'CONFIRMED',
+        'PROCESSING',
+        'SHIPPED',
+        'DELIVERED',
+      ]);
 
       // The other brand can't see or touch this order.
       await ctx.http().get(api(`/brand/orders/${orderId}`)).set(auth(other.owner.token)).expect(404);
@@ -668,9 +598,18 @@ describe('Brandak marketplace (e2e)', () => {
       expect(reported.target).toMatchObject({ title: 'خامة ممتازة', subtitle: 'Mona' });
       expect(reported.reporter.name).toBe('Cotton Shop Owner');
 
-      // Customer cancels a pending order → stock comes back.
+      // Mona received an order now, so her next one goes straight to the store.
+      await ctx.http().post(api(`/carts/${shop.brandId}/items`)).set(auth(customer.token)).send({ productId: product._id, variantId: variant(0), quantity: 1 }).expect(201);
       const before = await stockOf(0);
-      const second = await place('lifecycle-2');
+      const direct = await ctx
+        .http()
+        .post(api(`/checkout/${shop.brandId}/orders`))
+        .set(auth(customer.token))
+        .set('Idempotency-Key', 'lifecycle-2')
+        .send({ addressId })
+        .expect(201);
+      expect(direct.body.data.status).toBe('PENDING');
+      const second = direct.body.data.id as string;
       expect(await stockOf(0)).toBe(before - 1);
       await setStatus(second, 'CANCELLED').expect(422); // brand must give a reason
       await ctx.http().post(api(`/orders/me/${second}/cancel`)).set(auth(customer.token)).send({ reason: 'changed my mind' }).expect(200);
@@ -682,38 +621,80 @@ describe('Brandak marketplace (e2e)', () => {
       expect(customers.body.data[0]).toMatchObject({ name: 'Mona', deliveredCount: 1 });
     });
 
-    it('reports analytics for the brand and the platform', async () => {
+    it('records a refused parcel, restocks it, and lets the store block the customer', async () => {
+      const setStatus = (id: string, status: string, note?: string) =>
+        ctx.http().patch(api(`/brand/orders/${id}/status`)).set(auth(shop.owner.token)).send({ status, note });
+      await ctx.http().post(api(`/carts/${shop.brandId}/items`)).set(auth(customer.token)).send({ productId: product._id, variantId: variant(0), quantity: 1 }).expect(201);
+      const before = await stockOf(0);
+      const res = await ctx.http().post(api(`/checkout/${shop.brandId}/orders`)).set(auth(customer.token)).set('Idempotency-Key', 'refused-1').send({ addressId }).expect(201);
+      const id = res.body.data.id as string;
+      await setStatus(id, 'REFUSED').expect(409); // only a shipped parcel can be refused
+      for (const s of ['CONFIRMED', 'PROCESSING', 'SHIPPED']) await setStatus(id, s).expect(200);
+      const refused = await setStatus(id, 'REFUSED').expect(200);
+      expect(refused.body.data.commission).toBeNull(); // nothing to charge
+      expect(await stockOf(0)).toBe(before);
+
+      const seen = await ctx.http().get(api(`/brand/orders/${id}`)).set(auth(shop.owner.token)).expect(200);
+      expect(seen.body.data.customerTrust).toEqual({ delivered: 1, refused: 1, level: 'RISKY' });
+
+      await ctx.http().post(api(`/brand/orders/${id}/block-customer`)).set(auth(shop.owner.token)).send({ note: 'رفض الاستلام' }).expect(201);
+      const blocks = await ctx.http().get(api('/brand/blocks')).set(auth(shop.owner.token)).expect(200);
+      expect(blocks.body.data[0].customer.name).toBe('Mona');
+      await ctx.http().post(api(`/carts/${shop.brandId}/items`)).set(auth(customer.token)).send({ productId: product._id, variantId: variant(0), quantity: 1 }).expect(201);
+      const blocked = await ctx.http().post(api(`/checkout/${shop.brandId}/orders`)).set(auth(customer.token)).set('Idempotency-Key', 'blocked-1').send({ addressId }).expect(403);
+      expect(blocked.body.error.code).toBe('ORDER_NOT_ALLOWED');
+      await ctx.http().delete(api(`/brand/blocks/${blocks.body.data[0].id}`)).set(auth(shop.owner.token)).expect(204);
+      await ctx.http().delete(api(`/carts/${shop.brandId}`)).set(auth(customer.token)).expect(204);
+    });
+
+    it('reports analytics for the store and the platform', async () => {
       const brand = await ctx.http().get(api('/brand/analytics/overview')).set(auth(shop.owner.token)).expect(200);
       expect(brand.body.data.orders.byStatus.DELIVERED).toBe(1);
       expect(brand.body.data.topProducts[0].productId).toBe(product._id);
-      expect(brand.body.data.plan).toMatchObject({ maxActiveProducts: 200 });
+      expect(brand.body.data.commission).toMatchObject({ rate: 0.05, balance: 17.5, blocked: false });
 
-      const platform = await ctx.http().get(api('/admin/analytics/overview')).set(auth(admin)).expect(200);
-      expect(platform.body.data.subscriptions.active).toBeGreaterThan(0);
-      expect(platform.body.data.subscriptions.mrr).toBeGreaterThan(0);
-      expect(platform.body.data.subscriptions.renewalsInRange).toBeGreaterThanOrEqual(1);
+      const summary = await ctx.http().get(api('/admin/commissions/summary')).set(auth(admin)).expect(200);
+      expect(summary.body.data).toMatchObject({ commissionThisMonth: 17.5, outstanding: 17.5, storesOwing: 1 });
     });
 
-    it('hides a brand when its subscription ends and blocks new orders', async () => {
-      const brands = ctx.app.get<Model<Brand>>(getModelToken(Brand.name));
-      const jobs = ctx.app.get(SubscriptionJobs);
+    it('pauses a store that owes too much until it settles by InstaPay', async () => {
+      // An admin correction pushes the store over the 2000 EGP limit.
+      await ctx.http().post(api(`/admin/commissions/brands/${shop.brandId}/adjust`)).set(auth(admin)).send({ amount: 2500, note: 'test' }).expect(200);
+      const status = await ctx.http().get(api('/brand/commissions')).set(auth(shop.owner.token)).expect(200);
+      expect(status.body.data).toMatchObject({ balance: 2517.5, blocked: true });
+      const paused = await ctx.http().post(api(`/checkout/${shop.brandId}/quote`)).set(auth(customer.token)).send({ addressId }).expect(422);
+      expect(paused.body.error.code).toBe('STORE_PAYMENT_OVERDUE');
 
-      // Two days before the end: the owner gets a reminder.
-      const ends = (await brands.findById(other.brandId).lean())!.subscriptionEndsAt!;
-      await jobs.run(new Date(ends.getTime() - 2 * 86_400_000));
-      await jobs.run(new Date(ends.getTime() - 2 * 86_400_000)); // de-duplicated
-      const notes = await ctx.http().get(api('/notifications/me')).set(auth(other.owner.token)).expect(200);
-      expect(notes.body.data.filter((n: any) => n.type === 'SUBSCRIPTION_EXPIRING')).toHaveLength(1);
-
-      await brands.updateOne({ _id: other.brandId }, { $set: { subscriptionEndsAt: new Date(Date.now() - 1000) } });
-      await ctx.http().get(api(`/brands/${other.slug}`)).expect(404);
-      const otherProduct = await createProduct(other.owner.token, { status: 'DRAFT' });
+      const proofFileId = await upload(ctx, shop.owner.token, 'PAYMENT_PROOF');
       await ctx
         .http()
-        .post(api(`/carts/${other.brandId}/items`))
-        .set(auth(customer.token))
-        .send({ productId: otherProduct.body.data._id, variantId: otherProduct.body.data.variants[0]._id, quantity: 1 })
-        .expect(404);
+        .post(api('/brand/commissions/settlements'))
+        .set(auth(shop.owner.token))
+        .send({ amount: 9999, proofFileId, transactionReference: 'SET-1' })
+        .expect(422); // more than owed
+      const sent = await ctx
+        .http()
+        .post(api('/brand/commissions/settlements'))
+        .set(auth(shop.owner.token))
+        .send({ amount: 2517.5, proofFileId, transactionReference: 'SET-1' })
+        .expect(201);
+      await ctx
+        .http()
+        .post(api('/brand/commissions/settlements'))
+        .set(auth(shop.owner.token))
+        .send({ amount: 10, proofFileId, transactionReference: 'SET-2' })
+        .expect(409); // one under review at a time
+      const queue = await ctx.http().get(api('/admin/settlements?status=PENDING_REVIEW')).set(auth(admin)).expect(200);
+      expect(queue.body.data[0]).toMatchObject({ amount: 2517.5, brandName: 'Cotton Shop' });
+      await ctx.http().get(api(`/admin/settlements/${sent.body.data._id}/proof-url`)).set(auth(admin)).expect(200);
+      await ctx.http().post(api(`/admin/settlements/${sent.body.data._id}/approve`)).set(auth(admin)).expect(200);
+
+      const after = await ctx.http().get(api('/brand/commissions')).set(auth(shop.owner.token)).expect(200);
+      expect(after.body.data).toMatchObject({ balance: 0, blocked: false, dueSince: null });
+      const open = await ctx.http().post(api(`/checkout/${shop.brandId}/quote`)).set(auth(customer.token)).send({ addressId }).expect(422);
+      expect(open.body.error.code).toBe('CART_EMPTY'); // no longer paused, just an empty cart
+      const ledger = await ctx.http().get(api('/brand/commissions/ledger')).set(auth(shop.owner.token)).expect(200);
+      expect(ledger.body.data.map((e: any) => e.type)).toEqual(expect.arrayContaining(['COMMISSION', 'ADJUSTMENT', 'PAYMENT']));
     });
   });
   // ---------------------------------------------------------------- Admin soft delete
@@ -770,6 +751,16 @@ describe('Brandak marketplace (e2e)', () => {
 
     it('deletes only decided payments', async () => {
       const { owner, brandId } = await onboardBrand('Paid Store');
+      // Plans are history now, but old subscriptions and payments are still managed.
+      const sub = await ctx.http().post(api('/brand/subscriptions')).set(auth(owner.token)).send({ planId: growthPlanId, billingPeriod: 'MONTHLY' }).expect(201);
+      const proofFileId = await upload(ctx, owner.token, 'PAYMENT_PROOF');
+      const proof = await ctx
+        .http()
+        .post(api(`/brand/subscriptions/${sub.body.data.subscription._id}/payment-proofs`))
+        .set(auth(owner.token))
+        .send({ proofFileId, transactionReference: 'PAID-STORE-1' })
+        .expect(200);
+      await ctx.http().post(api(`/admin/payments/${proof.body.data.id}/approve`)).set(auth(admin)).send({}).expect(200);
       const paid = await ctx.http().get(api(`/admin/payments?brandId=${brandId}&limit=10`)).set(auth(admin)).expect(200);
       const approvedId = paid.body.data[0]._id;
       await ctx.http().post(api(`/admin/payments/${approvedId}/delete`)).set(auth(admin)).expect(200);

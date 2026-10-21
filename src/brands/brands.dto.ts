@@ -47,9 +47,10 @@ export class SocialLinksDto {
 }
 
 export class CreateBrandApplicationDto {
-  /** The plan chosen while opening the store; a store can't be created without one. */
+  /** Ignored: plans were replaced by a per-order commission (sent by older app versions). */
+  @IsOptional()
   @IsMongoId()
-  planId: string;
+  planId?: string;
 
   @IsOptional()
   @IsEnum(BillingPeriod)

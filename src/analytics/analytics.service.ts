@@ -1,4 +1,3 @@
-import { cairoMonthStart } from '@/common/utils/month';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -12,12 +11,13 @@ import { Payment } from '@/subscriptions/payment.schema';
 import { Subscription } from '@/subscriptions/subscription.schema';
 import { monthlyEquivalent } from '@/subscriptions/subscription-period';
 import { SubscriptionsService } from '@/subscriptions/subscriptions.service';
+import { CommissionsService } from '@/commissions/commissions.service';
 import { User } from '@/users/user.schema';
 
 const DAY_MS = 86_400_000;
 const LOW_STOCK_THRESHOLD = 3;
 const TIMEZONE = 'Africa/Cairo';
-const NOT_CANCELLED = { $ne: OrderStatus.CANCELLED };
+const NOT_CANCELLED = { $nin: [OrderStatus.CANCELLED, OrderStatus.REFUSED, OrderStatus.AWAITING_CONFIRMATION] };
 
 export interface Range {
   from: Date;
@@ -47,6 +47,7 @@ export class AnalyticsService {
     @InjectModel(Report.name) private readonly reports: Model<Report>,
     private readonly brands: BrandsService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly commissions: CommissionsService,
   ) {}
 
   async brandOverview(brandId: string, range: ReturnType<typeof resolveRange>) {
@@ -54,8 +55,8 @@ export class AnalyticsService {
     const inRange = (r: Range) => ({ brandId: id, deletedAt: null, createdAt: { $gte: r.from, $lt: r.to } });
 
     // Same rule as the checkout limit: this calendar month in Cairo, cancelled orders don't count.
-    const ordersThisMonth = await this.orders.countDocuments({ brandId: id, createdAt: { $gte: cairoMonthStart() }, status: { $ne: OrderStatus.CANCELLED } });
-    const [byStatus, previous, pending, daily, topProducts, lowStock, subscription, activeProducts] = await Promise.all([
+    const commission = await this.commissions.statusFor(id);
+    const [byStatus, previous, pending, daily, topProducts, lowStock, activeProducts] = await Promise.all([
       this.orders.aggregate<{ _id: OrderStatus; count: number; total: number }>([
         { $match: inRange(range) },
         { $group: { _id: '$status', count: { $sum: 1 }, total: { $sum: '$grandTotal' } } },
@@ -96,7 +97,6 @@ export class AnalyticsService {
         .select('title variants images')
         .limit(10)
         .lean(),
-      this.subscriptionsService.currentFor(id),
       this.products.countDocuments({ brandId: id, status: ProductStatus.ACTIVE }),
     ]);
 
@@ -128,18 +128,16 @@ export class AnalyticsService {
           .filter((v) => v.stock <= LOW_STOCK_THRESHOLD)
           .map((v) => ({ id: v._id.toString(), size: v.size ?? null, color: v.color ?? null, stock: v.stock })),
       })),
-      plan: subscription
-        ? {
-            name: subscription.planSnapshot.nameAr,
-            endsAt: subscription.endsAt,
-            activeProducts,
-            maxActiveProducts: subscription.planSnapshot.limits.maxActiveProducts,
-            isFree: subscription.planSnapshot.price === 0,
-            maxOrdersPerMonth: subscription.planSnapshot.limits.maxOrdersPerMonth ?? null,
-            maxImagesPerProduct: subscription.planSnapshot.limits.maxImagesPerProduct ?? 10,
-            ordersThisMonth,
-          }
-        : null,
+      // Plans were replaced by a per-order commission; kept null for older app versions.
+      plan: null,
+      activeProducts,
+      commission: {
+        rate: commission.commissionRate,
+        balance: commission.balance,
+        dueBy: commission.dueBy,
+        blocked: commission.blocked,
+        pendingSettlement: !!commission.pendingSettlement,
+      },
     };
   }
 

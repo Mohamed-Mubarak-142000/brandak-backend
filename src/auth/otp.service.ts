@@ -25,7 +25,8 @@ export class OtpService {
     const last = await this.otps
       .findOne({ userId: new Types.ObjectId(userId), purpose })
       .sort({ createdAt: -1 });
-    if (last && Date.now() - last.createdAt.getTime() < RESEND_COOLDOWN_MS) {
+    // The cooldown stops resend spam; once a code was used, a new one can go out at once.
+    if (last && !last.consumedAt && Date.now() - last.createdAt.getTime() < RESEND_COOLDOWN_MS) {
       throw new AppError('OTP_COOLDOWN', 'Please wait before requesting a new code', HttpStatus.TOO_MANY_REQUESTS);
     }
     const code = randomInt(0, 1_000_000).toString().padStart(6, '0');

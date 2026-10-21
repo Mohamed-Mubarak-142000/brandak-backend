@@ -1,9 +1,11 @@
 import { Controller, Get, Headers, HttpCode, UnauthorizedException } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
 import { Public } from '@/common/decorators';
 import { Env } from '@/config/env';
+import { OrdersService } from '@/orders/orders.service';
 import { SubscriptionJobs } from './subscription-jobs';
 
 /**
@@ -16,8 +18,10 @@ export class CronController {
   constructor(
     private readonly jobs: SubscriptionJobs,
     private readonly config: ConfigService<Env, true>,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
+  /** Daily housekeeping (the path name predates the commission model). */
   @Public()
   @HttpCode(204)
   @Get('subscriptions')
@@ -29,5 +33,7 @@ export class CronController {
       throw new UnauthorizedException();
     }
     await this.jobs.run();
+    // Orders nobody confirmed within 24 hours are cancelled and their stock released.
+    await this.moduleRef.get(OrdersService, { strict: false }).expireUnconfirmed();
   }
 }

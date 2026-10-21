@@ -51,6 +51,10 @@ export class Order {
   @Prop({ type: Object, required: true })
   addressSnapshot: Record<string, unknown>;
 
+  /** Platform commission charged when the order was delivered. */
+  @Prop({ type: Object })
+  commission?: { rate: number; base: number; amount: number };
+
   @Prop({ required: true }) subtotal: number;
   @Prop({ required: true }) shippingFee: number;
   @Prop({ default: 0 }) discountTotal: number;

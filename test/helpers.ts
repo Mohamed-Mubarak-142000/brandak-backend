@@ -29,6 +29,10 @@ export async function createTestApp(): Promise<TestContext> {
     PUBLIC_BASE_URL: 'http://localhost',
     INSTAPAY_RECEIVER: '01050867135',
     SUBSCRIPTION_GRACE_DAYS: '0',
+    // Never send real email from tests: codes go to the log channel the tests read.
+    SMTP_HOST: '',
+    SMTP_USER: '',
+    SMTP_PASS: '',
     SEED_ADMIN_EMAIL: 'admin@brandak.test',
     SEED_ADMIN_PASSWORD: 'AdminPass123',
   });

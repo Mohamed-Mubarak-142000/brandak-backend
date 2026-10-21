@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsInt, IsMongoId, Max, Min } from 'class-validator';
 import { AuthUser, CurrentUser } from '@/common/decorators';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
+import { CustomerOnlyGuard } from '@/common/guards/customer-only.guard';
 import { CartsService, MAX_QTY_PER_LINE } from './carts.service';
 
 class AddCartItemDto {
@@ -27,6 +28,7 @@ class UpdateCartItemDto {
 
 @ApiTags('Customer')
 @ApiBearerAuth()
+@UseGuards(CustomerOnlyGuard)
 @Controller('carts')
 export class CartsController {
   constructor(private readonly carts: CartsService) {}

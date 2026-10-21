@@ -18,7 +18,7 @@ export class BrandMemberGuard implements CanActivate {
     const membership = await this.members.findForUser(user.userId);
     if (!membership) throw AppError.forbidden('NO_BRAND', 'You do not manage a brand yet');
     if (await this.members.isBrandDeleted(membership.brandId)) {
-      throw AppError.forbidden('BRAND_DELETED', 'This store was removed by the Dakakeen team');
+      throw AppError.forbidden('BRAND_DELETED', 'This store was removed by the Fatrina team');
     }
     req.brand = { brandId: membership.brandId.toString(), memberRole: membership.role };
     return true;

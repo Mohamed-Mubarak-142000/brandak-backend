@@ -68,7 +68,7 @@ export class ProductImportController {
     const names = new Map(all.map((c) => [c._id.toString(), c.nameAr]));
     const file = await buildTemplate(all.map((c) => ({ nameAr: c.nameAr, parent: c.parentId ? names.get(c.parentId.toString()) : undefined })));
     res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('content-disposition', `attachment; filename="dakakeen-products-template.xlsx"`);
+    res.setHeader('content-disposition', `attachment; filename="fatrina-products-template.xlsx"`);
     res.setHeader('cache-control', 'public, max-age=3600');
     res.end(file);
   }

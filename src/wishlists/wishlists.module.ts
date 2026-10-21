@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { InjectModel, MongooseModule } from '@nestjs/mongoose';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsMongoId } from 'class-validator';
@@ -8,6 +8,7 @@ import { ProductStatus } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { Lean, PageQueryDto, PageResult, paginate } from '@/common/pagination';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
+import { CustomerOnlyGuard } from '@/common/guards/customer-only.guard';
 import { BrandsService } from '@/brands/brands.service';
 import { Product } from '@/products/product.schema';
 import { ProductsService } from '@/products/products.service';
@@ -68,6 +69,7 @@ export class WishlistsService {
 
 @ApiTags('Customer')
 @ApiBearerAuth()
+@UseGuards(CustomerOnlyGuard)
 @Controller('wishlists/me')
 export class WishlistsController {
   constructor(private readonly wishlists: WishlistsService) {}

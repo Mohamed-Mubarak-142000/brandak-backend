@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { BrandStatus, ProductStatus, SubscriptionStatus } from '@/common/enums';
@@ -25,12 +24,12 @@ export class SubscriptionJobs {
     private readonly subs: SubscriptionsService,
   ) {}
 
-  /** Hourly so expiry is reflected quickly; notifications are de-duplicated per period end. */
-  @Cron(CronExpression.EVERY_HOUR)
-  async run(now = new Date()) {
-    const expired = await this.expireEnded(now);
-    const reminded = await this.sendReminders(now);
-    if (expired || reminded) this.logger.log(`Expired ${expired} subscriptions, sent ${reminded} reminders`);
+  /**
+   * Plans were replaced by a per-order commission, so subscriptions no longer expire stores or
+   * send renewal reminders. The old jobs stay below for reference; nothing schedules them.
+   */
+  async run() {
+    this.logger.debug('Subscription jobs are retired (commission model)');
   }
 
   async expireEnded(now: Date) {

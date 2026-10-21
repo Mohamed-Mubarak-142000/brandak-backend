@@ -19,8 +19,10 @@ import {
   VariantDto,
 } from './products.dto';
 
-/** Safety cap on unpublished drafts so a brand without a plan can't fill the database. */
-const MAX_TOTAL_PRODUCTS = 1000;
+/** Safety caps so a single store can't fill the database. */
+const MAX_TOTAL_PRODUCTS = 2000;
+const MAX_ACTIVE_PRODUCTS = 1000;
+const MAX_IMAGES = 10;
 
 @Injectable()
 export class ProductsService {
@@ -102,9 +104,8 @@ export class ProductsService {
   }
 
   /** Photos allowed per product on the store's plan (10 without a plan, for drafts). */
-  async imageLimit(brandId: string) {
-    const current = await this.subscriptions.currentFor(brandId);
-    return current?.planSnapshot.limits.maxImagesPerProduct ?? 10;
+  async imageLimit(_brandId: string) {
+    return MAX_IMAGES;
   }
 
   private async productImages(userId: string, brandId: string, ids: string[], colors?: (string | null)[]) {
@@ -118,10 +119,8 @@ export class ProductsService {
 
   /** How many more products the plan lets the store publish; null when there is no active plan. */
   async publishSlots(brandId: string): Promise<number | null> {
-    const current = await this.subscriptions.currentFor(brandId);
-    if (!current) return null;
     const active = await this.products.countDocuments({ brandId: new Types.ObjectId(brandId), status: ProductStatus.ACTIVE });
-    return Math.max(0, current.planSnapshot.limits.maxActiveProducts - active);
+    return Math.max(0, MAX_ACTIVE_PRODUCTS - active);
   }
 
   /**
@@ -260,19 +259,15 @@ export class ProductsService {
     return product;
   }
 
+  /** No plans any more: only a generous safety cap on published products per store. */
   private async assertCanPublish(brandId: string, excludeId?: Types.ObjectId) {
-    const current = await this.subscriptions.currentFor(brandId);
-    if (!current) {
-      throw AppError.forbidden('SUBSCRIPTION_REQUIRED', 'An active subscription is required to publish products');
-    }
     const active = await this.products.countDocuments({
       brandId: new Types.ObjectId(brandId),
       status: ProductStatus.ACTIVE,
       ...(excludeId ? { _id: { $ne: excludeId } } : {}),
     });
-    const max = current.planSnapshot.limits.maxActiveProducts;
-    if (active >= max) {
-      throw AppError.unprocessable('PLAN_LIMIT_REACHED', `Your plan allows up to ${max} published products`);
+    if (active >= MAX_ACTIVE_PRODUCTS) {
+      throw AppError.unprocessable('PLAN_LIMIT_REACHED', `Up to ${MAX_ACTIVE_PRODUCTS} published products per store`);
     }
   }
 

@@ -94,9 +94,13 @@ export class Brand {
   @Prop({ type: BrandSettingsSchema, default: () => ({}) })
   settings: BrandSettings;
 
-  /** Denormalized end of the latest paid period; drives storefront visibility. */
+  /** Denormalized end of the latest paid period. Kept for history; commission replaced plans. */
   @Prop({ type: Date, default: null })
   subscriptionEndsAt: Date | null;
+
+  /** Since when the store has owed commission (null = owes nothing). Drives the order block. */
+  @Prop({ type: Date, default: null })
+  commissionDueSince: Date | null;
 
   @Prop({ default: '' })
   searchText: string;

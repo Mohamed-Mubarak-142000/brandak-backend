@@ -39,12 +39,17 @@ export class MailContactChannel implements ContactChannel {
   private readonly transport: Transporter | null;
   private readonly from: string;
 
+  /** Codes that went to the log instead of a real inbox (development and tests read these). */
+  get sent() {
+    return this.log.sent;
+  }
+
   constructor(config: ConfigService<Env, true>) {
     const host = config.get('SMTP_HOST', { infer: true });
     const user = config.get('SMTP_USER', { infer: true });
     const pass = config.get('SMTP_PASS', { infer: true });
     const port = config.get('SMTP_PORT', { infer: true });
-    this.from = config.get('MAIL_FROM', { infer: true }) ?? `دكاكين <${user}>`;
+    this.from = config.get('MAIL_FROM', { infer: true }) ?? `فاترينة <${user}>`;
     this.transport =
       host && user && pass
         ? createTransport({ host, port, secure: port === 465, auth: { user, pass } })
@@ -54,9 +59,13 @@ export class MailContactChannel implements ContactChannel {
 
   async send(channel: 'email' | 'phone', target: string, message: string, code?: CodeMessage) {
     if (channel !== 'email' || !this.transport || !code) return this.log.send(channel, target, message);
-    const reset = code.purpose === OtpPurpose.RESET_PASSWORD;
-    const subject = reset ? `${code.code} كود تغيير كلمة السر في دكاكين` : `${code.code} كود تأكيد بريدك في دكاكين`;
-    const intro = reset ? 'طلبت تغيير كلمة السر. استخدم الكود ده:' : 'أهلاً بيك في دكاكين! اكتب الكود ده في التطبيق عشان تأكّد بريدك:';
+    const copy = {
+      [OtpPurpose.RESET_PASSWORD]: { subject: 'كود تغيير كلمة السر في فاترينة', intro: 'طلبت تغيير كلمة السر. استخدم الكود ده:' },
+      [OtpPurpose.CONFIRM_ORDER]: { subject: 'كود تأكيد طلبك من فاترينة', intro: 'عشان نبعت طلبك للمتجر، اكتب الكود ده في التطبيق:' },
+      [OtpPurpose.VERIFY_CONTACT]: { subject: 'كود تأكيد بريدك في فاترينة', intro: 'أهلاً بيك في فاترينة! اكتب الكود ده في التطبيق عشان تأكّد بريدك:' },
+    }[code.purpose];
+    const subject = `${code.code} ${copy.subject}`;
+    const intro = copy.intro;
     await this.transport.sendMail({
       from: this.from,
       to: target,
@@ -72,7 +81,7 @@ function emailHtml(intro: string, code: string) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:440px;background:#FFFFFF;border:1px solid #F1E5D8;border-radius:16px">
 <tr><td style="padding:28px 24px;text-align:right">
-<div style="font-size:22px;font-weight:bold;color:#F16B21;margin-bottom:16px">دكاكين</div>
+<div style="font-size:22px;font-weight:bold;color:#F16B21;margin-bottom:16px">فاترينة</div>
 <p style="font-size:16px;line-height:1.7;margin:0 0 20px">${intro}</p>
 <div dir="ltr" style="font-size:34px;letter-spacing:10px;font-weight:bold;text-align:center;background:#FFF6EE;border-radius:12px;padding:16px 8px;color:#C2500F">${code}</div>
 <p style="font-size:13px;line-height:1.7;color:#7A6656;margin:20px 0 0">الكود صالح لمدة 10 دقايق. لو مش انت اللي طلبته، تجاهل الرسالة دي ومحدش هيقدر يدخل حسابك.</p>

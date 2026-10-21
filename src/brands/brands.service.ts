@@ -39,20 +39,16 @@ export class BrandsService {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
-  /** A brand is visible (and can take orders) when approved and its subscription is running. */
+  /**
+   * A brand is visible once approved. Plans were replaced by a per-order commission, so there is
+   * no subscription to check; a store that owes overdue commission still shows but pauses orders.
+   */
   visibleFilter(): FilterQuery<Brand> {
-    const graceMs = this.config.get('SUBSCRIPTION_GRACE_DAYS', { infer: true }) * 86_400_000;
-    return { status: BrandStatus.ACTIVE, subscriptionEndsAt: { $gt: new Date(Date.now() - graceMs) }, deletedAt: null };
+    return { status: BrandStatus.ACTIVE, deletedAt: null };
   }
 
-  isVisible(brand: Pick<Brand, 'status' | 'subscriptionEndsAt'> & { deletedAt?: Date | null }) {
-    const graceMs = this.config.get('SUBSCRIPTION_GRACE_DAYS', { infer: true }) * 86_400_000;
-    return (
-      !brand.deletedAt &&
-      brand.status === BrandStatus.ACTIVE &&
-      !!brand.subscriptionEndsAt &&
-      brand.subscriptionEndsAt.getTime() > Date.now() - graceMs
-    );
+  isVisible(brand: Pick<Brand, 'status'> & { deletedAt?: Date | null }) {
+    return !brand.deletedAt && brand.status === BrandStatus.ACTIVE;
   }
 
   async visibleBrandIds(extra: FilterQuery<Brand> = {}): Promise<Types.ObjectId[]> {
@@ -220,7 +216,7 @@ export class BrandsService {
   reinstate(adminId: string, id: string) {
     return this.transition(adminId, id, [BrandStatus.SUSPENDED], BrandStatus.ACTIVE, 'BRAND_REINSTATED', {
       title: 'تمت إعادة تفعيل المتجر',
-      body: 'تقدر تكمّل البيع على دكاكين.',
+      body: 'تقدر تكمّل البيع على فاترينة.',
     });
   }
 

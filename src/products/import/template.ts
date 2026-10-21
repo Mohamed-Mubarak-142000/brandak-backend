@@ -7,7 +7,7 @@ const SOFT = 'FFFFEADB';
 /** The import template: a products sheet with examples, the category names, and instructions. */
 export async function buildTemplate(categories: { nameAr: string; parent?: string }[]): Promise<Buffer> {
   const book = new ExcelJS.Workbook();
-  book.creator = 'Dakakeen';
+  book.creator = 'Fatrina';
 
   const sheet = book.addWorksheet('المنتجات', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
   sheet.columns = COLUMNS.map((c) => ({ header: c.header, key: c.id, width: c.width }));

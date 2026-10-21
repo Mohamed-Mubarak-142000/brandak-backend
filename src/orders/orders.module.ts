@@ -4,6 +4,7 @@ import { AddressesModule } from '@/addresses/addresses.module';
 import { CartsModule } from '@/carts/carts.module';
 import { UsersModule } from '@/users/users.module';
 import { CheckoutService } from './checkout.service';
+import { BrandBlock, BrandBlockSchema } from './brand-block.schema';
 import { Counter, CounterSchema, Order, OrderSchema } from './order.schema';
 import { AdminOrdersController, BrandOrdersController, CustomerOrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -16,6 +17,7 @@ import { OrdersService } from './orders.service';
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
       { name: Counter.name, schema: CounterSchema },
+      { name: BrandBlock.name, schema: BrandBlockSchema },
     ]),
   ],
   controllers: [CustomerOrdersController, BrandOrdersController, AdminOrdersController],

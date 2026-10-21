@@ -74,12 +74,16 @@ export enum ProductStatus {
 }
 
 export enum OrderStatus {
+  /** Waiting for the customer to confirm with an email code (new or low-trust customers). */
+  AWAITING_CONFIRMATION = 'AWAITING_CONFIRMATION',
   PENDING = 'PENDING',
   CONFIRMED = 'CONFIRMED',
   PROCESSING = 'PROCESSING',
   SHIPPED = 'SHIPPED',
   DELIVERED = 'DELIVERED',
   CANCELLED = 'CANCELLED',
+  /** The customer refused the parcel at the door. */
+  REFUSED = 'REFUSED',
 }
 
 export enum OrderPaymentMethod {
@@ -106,4 +110,5 @@ export enum ReportStatus {
 export enum OtpPurpose {
   VERIFY_CONTACT = 'VERIFY_CONTACT',
   RESET_PASSWORD = 'RESET_PASSWORD',
+  CONFIRM_ORDER = 'CONFIRM_ORDER',
 }

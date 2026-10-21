@@ -45,6 +45,6 @@ import { SessionsService } from './sessions.service';
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
-  exports: [SessionsService, CONTACT_CHANNEL],
+  exports: [SessionsService, CONTACT_CHANNEL, OtpService],
 })
 export class AuthModule {}

@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   MaxLength,
 } from 'class-validator';
 import { OrderPaymentMethod, OrderStatus } from '@/common/enums';
@@ -39,7 +40,7 @@ export class PlaceOrderDto extends QuoteDto {
 }
 
 export class UpdateOrderStatusDto {
-  @IsIn([OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.CANCELLED])
+  @IsIn([OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUSED])
   status: OrderStatus;
 
   /** Required when cancelling. */
@@ -89,4 +90,17 @@ export class AdminOrdersQueryDto extends BrandOrdersQueryDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   deleted?: boolean;
+}
+
+export class ConfirmOrdersDto {
+  @IsString()
+  @Matches(/^\d{6}$/)
+  code: string;
+}
+
+export class BlockCustomerDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  note?: string;
 }

@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards }
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PublicCache } from '@/common/cache';
 import { AuthUser, BrandContext, CurrentBrand, CurrentUser, Public, Roles } from '@/common/decorators';
-import { BillingPeriod, Role } from '@/common/enums';
+import { Role } from '@/common/enums';
 import { BrandMemberGuard } from '@/common/guards/brand-member.guard';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
 import {
@@ -12,16 +12,12 @@ import {
   ReasonDto,
   UpdateBrandDto,
 } from './brands.dto';
-import { SubscriptionsService } from '@/subscriptions/subscriptions.service';
 import { BrandsService } from './brands.service';
 
 @ApiTags('Brands')
 @Controller()
 export class BrandsController {
-  constructor(
-    private readonly brands: BrandsService,
-    private readonly subscriptions: SubscriptionsService,
-  ) {}
+  constructor(private readonly brands: BrandsService) {}
 
   @Public()
   @PublicCache(60)
@@ -32,12 +28,9 @@ export class BrandsController {
 
   @ApiBearerAuth()
   @Post('brand-applications')
-  async apply(@CurrentUser() user: AuthUser, @Body() dto: CreateBrandApplicationDto) {
-    // Check the plan first so a bad plan never leaves a store behind without one.
-    await this.subscriptions.requirePlan(dto.planId);
-    const brand = await this.brands.apply(user.userId, dto);
-    const plan = await this.subscriptions.request(user.userId, brand.id, { planId: dto.planId, billingPeriod: dto.billingPeriod ?? BillingPeriod.MONTHLY });
-    return { ...brand, subscription: plan };
+  apply(@CurrentUser() user: AuthUser, @Body() dto: CreateBrandApplicationDto) {
+    // Plans were replaced by a per-order commission; older apps may still send a planId.
+    return this.brands.apply(user.userId, dto);
   }
 
   @ApiBearerAuth()
