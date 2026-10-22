@@ -720,6 +720,37 @@ describe('Fatrina marketplace (e2e)', () => {
       await ctx.http().get(api('/brands/me')).set(auth(owner.token)).expect(200);
     });
 
+    it('lets a customer delete their own account, wiping personal data', async () => {
+      const u = await registerUser(ctx, 'Leaving Customer');
+      await ctx
+        .http()
+        .post(api('/addresses/me'))
+        .set(auth(u.token))
+        .send({ recipientName: 'Leaving', phone: '01022225555', governorate: 'CAI', city: 'Giza', street: '1 Street', location: { lat: 30, lng: 31 } })
+        .expect(201);
+      const wrong = await ctx.http().post(api('/auth/delete-account')).set(auth(u.token)).send({ password: 'nope-nope1' }).expect(422);
+      expect(wrong.body.error.code).toBe('WRONG_PASSWORD');
+      await ctx.http().post(api('/auth/delete-account')).set(auth(u.token)).send({ password: 'Passw0rd!' }).expect(204);
+
+      // Signed out everywhere, can't sign in, and the email can open a new account.
+      await ctx.http().get(api('/users/me')).set(auth(u.token)).expect(401);
+      await ctx.http().post(api('/auth/login')).send({ identifier: u.email, password: 'Passw0rd!' }).expect(401);
+      await ctx.http().post(api('/auth/register')).send({ name: 'Back Again', email: u.email, phone: u.phone, password: 'Passw0rd!' }).expect(201);
+
+      // Store owners close the store with support first.
+      const owner = await registerUser(ctx, 'Owner Leaving');
+      const logoFileId = await upload(ctx, owner.token, 'BRAND_LOGO');
+      await ctx.http().post(api('/brand-applications')).set(auth(owner.token)).send({ storeType: 'BRAND', name: 'Leaving Store', categoryIds: [categoryId], contact: { phone: '01011112222' }, logoFileId }).expect(201);
+      const blocked = await ctx.http().post(api('/auth/delete-account')).set(auth(owner.token)).send({ password: 'Passw0rd!' }).expect(409);
+      expect(blocked.body.error.code).toBe('STORE_OWNER');
+
+      // The public page Google Play links to.
+      const page = await ctx.http().get('/delete-account').expect(200);
+      expect(page.text).toContain('حذف الحساب');
+      await ctx.http().get('/privacy').expect(200);
+      await ctx.http().get('/terms').expect(200);
+    });
+
     it('signs a deleted user out, blocks sign-in, and protects admins', async () => {
       const u = await registerUser(ctx);
       await ctx.http().post(api(`/admin/users/${u.id}/delete`)).set(auth(admin)).expect(200);

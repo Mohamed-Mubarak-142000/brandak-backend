@@ -35,6 +35,7 @@ import { ResellersModule } from './resellers/resellers.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { InsightsModule } from './insights/insights.module';
 import { StorefrontModule } from './storefront/storefront.controller';
+import { LegalModule } from './legal/legal.controller';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { UsersModule } from './users/users.module';
@@ -101,6 +102,7 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     TrackingModule,
     InsightsModule,
     StorefrontModule,
+    LegalModule,
     ProductsModule,
     AddressesModule,
     WishlistsModule,

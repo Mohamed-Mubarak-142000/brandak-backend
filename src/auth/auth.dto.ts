@@ -71,3 +71,9 @@ export class ResetPasswordDto extends ForgotPasswordDto {
   @Matches(STRONG_PASSWORD, { message: PASSWORD_MESSAGE })
   newPassword: string;
 }
+
+export class DeleteAccountDto {
+  @IsString()
+  @Length(1, 128)
+  password: string;
+}

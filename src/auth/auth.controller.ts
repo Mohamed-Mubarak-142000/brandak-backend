@@ -5,6 +5,7 @@ import { Request } from 'express';
 import { AuthUser, CurrentUser, Public } from '@/common/decorators';
 import {
   ChangePasswordDto,
+  DeleteAccountDto,
   ForgotPasswordDto,
   LoginDto,
   RefreshDto,
@@ -73,6 +74,15 @@ export class AuthController {
   @Post('change-password')
   changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
     return this.auth.changePassword(user.userId, user.sessionId, dto);
+  }
+
+  /** Deletes the signed-in account after confirming the password. */
+  @ApiBearerAuth()
+  @Throttle(STRICT)
+  @HttpCode(204)
+  @Post('delete-account')
+  deleteAccount(@CurrentUser() user: AuthUser, @Body() dto: DeleteAccountDto) {
+    return this.auth.deleteAccount(user.userId, dto.password);
   }
 
   @Public()

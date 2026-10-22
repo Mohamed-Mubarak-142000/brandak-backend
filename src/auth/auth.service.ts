@@ -1,8 +1,9 @@
 import { HttpStatus, Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import * as argon2 from 'argon2';
-import { Model } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
+import { BrandMembersService } from '@/brands/brand-members.service';
 import { AccountStatus, OtpPurpose, Role } from '@/common/enums';
 import { AppError } from '@/common/errors';
 import { normalizeEgyptPhone, normalizeEmail } from '@/common/utils/text';
@@ -25,6 +26,8 @@ export class AuthService {
     private readonly sessions: SessionsService,
     private readonly otp: OtpService,
     private readonly jwt: JwtService,
+    private readonly members: BrandMembersService,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   async register(dto: RegisterDto, meta: ClientMeta) {
@@ -105,6 +108,56 @@ export class AuthService {
       .catch((e: Error & { code?: string }) => {
         if (e?.code !== 'OTP_COOLDOWN') new Logger('AuthService').error(`reset code not sent to user ${user.id}: ${e?.message}`);
       });
+  }
+
+  /**
+   * The customer deletes their own account (Google Play requires this in the app). Personal data
+   * is wiped and every session ends; orders stay with the stores under their own snapshot.
+   * Store owners first close their store with support (it has orders and dues to settle).
+   */
+  async deleteAccount(userId: string, password: string) {
+    const user = await this.userModel.findOne({ _id: userId, deletedAt: null }).select('+passwordHash');
+    if (!user) throw new UnauthorizedException();
+    const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
+    if (!ok) {
+      throw AppError.unprocessable('WRONG_PASSWORD', 'Password is incorrect', [{ field: 'password', reason: 'incorrect' }]);
+    }
+    if (await this.members.findForUser(userId)) {
+      throw AppError.conflict('STORE_OWNER', 'Close your store with Fatrina support before deleting the account');
+    }
+    const id = new Types.ObjectId(userId);
+    // An order on its way still needs the customer's name, phone and address.
+    const orders = this.connection.models['Order'];
+    const active = ['AWAITING_CONFIRMATION', 'PENDING', 'CONFIRMED', 'PROCESSING', 'SHIPPED'];
+    if (orders && (await orders.exists({ userId: id, status: { $in: active }, deletedAt: null }))) {
+      throw AppError.conflict('ACTIVE_ORDERS', 'Wait for your orders to arrive (or cancel them) before deleting the account');
+    }
+    // Stores keep their order history (accounting), without the customer's personal data.
+    await orders?.updateMany({ userId: id }, { $set: { customer: { name: 'مستخدم محذوف', phone: '' }, addressSnapshot: null } });
+    // Unique placeholders free the email and phone for a new account later.
+    await this.userModel.updateOne(
+      { _id: id },
+      {
+        $set: {
+          name: 'مستخدم محذوف',
+          email: `deleted-${userId}@deleted.fatrina`,
+          phone: `deleted-${userId}`,
+          passwordHash: await argon2.hash(`${userId}-${Date.now()}-${Math.random()}`, { type: argon2.argon2id }),
+          deletedAt: new Date(),
+          deletedBy: id,
+        },
+        $unset: { emailVerifiedAt: 1, phoneVerifiedAt: 1 },
+      },
+    );
+    // Reviews and questions stay useful to other shoppers, without the name.
+    for (const name of ['Review', 'Question']) {
+      await this.connection.models[name]?.updateMany({ userId: id }, { $set: { userName: 'مستخدم محذوف' } });
+    }
+    // Personal lists go with the account (models that aren't loaded are skipped).
+    for (const name of ['Address', 'Cart', 'WishlistItem', 'Watch', 'Follow']) {
+      await this.connection.models[name]?.deleteMany({ userId: id });
+    }
+    await this.sessions.revokeAllForUser(userId);
   }
 
   /** Keeps the current session signed in and signs out every other device. */

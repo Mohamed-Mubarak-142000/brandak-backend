@@ -11,7 +11,7 @@ export function setupApp(app: INestApplication, corsOrigins: string[] = []) {
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.enableCors({ origin: corsOrigins.length ? corsOrigins : false, credentials: false });
   // Store web pages (/s/:slug) live at the root, for short bio links.
-  app.setGlobalPrefix('api/v1', { exclude: ['uploads/public/(.*)', 's/(.*)'] });
+  app.setGlobalPrefix('api/v1', { exclude: ['uploads/public/(.*)', 's/(.*)', 'privacy', 'terms', 'delete-account'] });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
