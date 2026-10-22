@@ -16,6 +16,7 @@ class FakeAi implements ProductAiProvider {
     colors: ['أسود', 'أسود', ' أبيض '],
     sizes: ['M', 'L', 'XL'],
     tags: ['تيشيرت', 'قطن', 'صيفي'],
+    suggestedPrice: 349.6,
   };
   async draft() {
     this.calls++;
@@ -179,6 +180,7 @@ describe('Fatrina growth features (e2e)', () => {
       colors: ['أسود', 'أبيض'],
       sizes: ['M', 'L', 'XL'],
       tags: ['تيشيرت', 'قطن', 'صيفي'],
+      suggestedPrice: 350,
     });
     expect((await ctx.http().get(api('/brand/ai/status')).set(auth(store.owner.token)).expect(200)).body.data.remaining).toBe(29);
 
