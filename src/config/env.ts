@@ -30,6 +30,8 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().default('gemini-flash-latest'),
   /** Product drafts per store per day. */
   AI_DAILY_LIMIT: z.coerce.number().int().positive().default(30),
+  /** Google Play review accounts: their orders skip the email confirmation code (reviewers can't read that inbox). */
+  REVIEW_ACCOUNTS: z.string().default('review.customer@fatrina.app,review.seller@fatrina.app'),
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().optional(),
 });

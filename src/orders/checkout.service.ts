@@ -21,6 +21,8 @@ import { MAX_MARKUP, ResellersService } from '@/resellers/resellers.service';
 import { normalizeEgyptPhone } from '@/common/utils/text';
 import { round2 } from '@/commissions/commission-math';
 import { TrackingService } from '@/tracking/tracking.service';
+import { ConfigService } from '@nestjs/config';
+import { Env } from '@/config/env';
 import { BrandBlock } from './brand-block.schema';
 import { needsConfirmation } from './customer-trust';
 import { Counter, Order } from './order.schema';
@@ -49,7 +51,19 @@ export class CheckoutService {
     private readonly loyalty: LoyaltyService,
     private readonly resellers: ResellersService,
     private readonly tracking: TrackingService,
-  ) {}
+    config: ConfigService<Env, true>,
+  ) {
+    this.reviewAccounts = new Set(
+      config
+        .get('REVIEW_ACCOUNTS', { infer: true })
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean),
+    );
+  }
+
+  /** Store-review accounts (Google Play) whose orders skip the email code. */
+  private readonly reviewAccounts: Set<string>;
 
   /** Read-only preview with the same rules as placing the order. */
   async quote(userId: string, brandId: string, dto: QuoteDto) {
@@ -135,7 +149,8 @@ export class CheckoutService {
     }
     if (dto.resale) await this.assertResale(userId, brand, dto);
     // New customers, and those who refuse parcels, confirm the order with an email code first.
-    const confirm = needsConfirmation((await this.ordersService.trustFor(userId)).level);
+    const reviewer = this.reviewAccounts.has((await this.users.getById(userId)).email.toLowerCase());
+    const confirm = !reviewer && needsConfirmation((await this.ordersService.trustFor(userId)).level);
     const firstStatus = confirm ? OrderStatus.AWAITING_CONFIRMATION : OrderStatus.PENDING;
     const [user, where, cart] = await Promise.all([
       this.users.getById(userId),
