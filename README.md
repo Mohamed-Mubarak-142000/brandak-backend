@@ -1,6 +1,6 @@
-# Brandak Backend
+# Fatrina Backend
 
-NestJS + MongoDB API for Brandak (براندك), a multi-brand marketplace. Small brands subscribe through manual InstaPay transfers that an admin reviews. Customers buy from each brand separately and pay cash on delivery.
+NestJS + MongoDB API for Fatrina (فاترينة), an Egyptian multi-store marketplace. Stores pay a 5% commission on delivered orders (settled by InstaPay transfers an admin reviews). Customers buy from each store separately and pay cash on delivery.
 
 ## Run locally
 

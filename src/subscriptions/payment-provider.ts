@@ -29,7 +29,10 @@ export class InstapayManualProvider implements SubscriptionPaymentProvider {
       amount,
       currency: 'EGP',
       receiver: this.config.get('INSTAPAY_RECEIVER', { infer: true }),
-      receiverName: this.config.get('INSTAPAY_RECEIVER_NAME', { infer: true }),
+      // Older deployments still carry the app's previous names; show the current one.
+      receiverName: /^(brandak|dakakeen|dakaken)$/i.test(this.config.get('INSTAPAY_RECEIVER_NAME', { infer: true }).trim())
+        ? 'فاترينة'
+        : this.config.get('INSTAPAY_RECEIVER_NAME', { infer: true }),
       stepsAr: [
         'افتح تطبيق InstaPay وحوّل المبلغ المطلوب بالضبط إلى الرقم الموضح.',
         'احتفظ بصورة إيصال التحويل والرقم المرجعي للعملية.',

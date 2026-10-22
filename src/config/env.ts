@@ -21,7 +21,7 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   MAIL_FROM: z.string().optional(),
   INSTAPAY_RECEIVER: z.string().min(1),
-  INSTAPAY_RECEIVER_NAME: z.string().default('Brandak'),
+  INSTAPAY_RECEIVER_NAME: z.string().default('فاترينة'),
   /** Shared secret Vercel Cron sends to /internal/cron/* endpoints. */
   CRON_SECRET: z.string().min(16).optional(),
   SUBSCRIPTION_GRACE_DAYS: z.coerce.number().int().min(0).default(0),

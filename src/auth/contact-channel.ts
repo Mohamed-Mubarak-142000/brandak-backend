@@ -53,6 +53,11 @@ export class MailContactChannel implements ContactChannel {
   private readonly transport: Transporter | null;
   private readonly from: string;
 
+  /** Whether email really goes out (false = codes only reach the log). */
+  get configured() {
+    return !!this.transport;
+  }
+
   /** Codes that went to the log instead of a real inbox (development and tests read these). */
   get sent() {
     return this.log.sent;
@@ -63,7 +68,10 @@ export class MailContactChannel implements ContactChannel {
     const user = config.get('SMTP_USER', { infer: true });
     const pass = config.get('SMTP_PASS', { infer: true });
     const port = config.get('SMTP_PORT', { infer: true });
-    this.from = config.get('MAIL_FROM', { infer: true }) ?? `فاترينة <${user}>`;
+    // Always sent as «فاترينة»: MAIL_FROM only supplies the address (old configs still say Dakakeen).
+    const configured = config.get('MAIL_FROM', { infer: true });
+    const address = configured?.match(/<([^>]+)>/)?.[1] ?? configured?.trim() ?? user;
+    this.from = `فاترينة <${address}>`;
     this.transport =
       host && user && pass
         ? createTransport({ host, port, secure: port === 465, auth: { user, pass } })

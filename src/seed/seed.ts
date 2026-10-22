@@ -44,7 +44,7 @@ export async function seed(app: { get: <T>(token: any) => T }, log = console.log
     const exists = await users.exists({ email });
     if (!exists) {
       await users.create({
-        name: 'Brandak Admin',
+        name: 'Fatrina Admin',
         email,
         phone: '+201000000000',
         passwordHash: await argon2.hash(password, { type: argon2.argon2id }),

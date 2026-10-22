@@ -37,7 +37,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     app = await server;
   } catch (e) {
     // Boot failures (bad env, DB unreachable) end up in Vercel's runtime logs with the real reason.
-    console.error('Brandak API failed to start:', e instanceof Error ? e.message : e);
+    console.error('Fatrina API failed to start:', e instanceof Error ? e.message : e);
     res.statusCode = 503;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ success: false, error: { code: 'SERVICE_UNAVAILABLE', message: 'API failed to start' } }));

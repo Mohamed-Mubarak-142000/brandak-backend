@@ -20,7 +20,7 @@ async function bootstrap() {
     const doc = SwaggerModule.createDocument(
       app,
       new DocumentBuilder()
-        .setTitle('Brandak API')
+        .setTitle('Fatrina API')
         .setDescription('Multi-brand marketplace API. All responses use { success, data, meta } envelopes.')
         .setVersion('1.0')
         .addBearerAuth()

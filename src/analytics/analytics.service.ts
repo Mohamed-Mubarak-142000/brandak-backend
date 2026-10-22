@@ -214,7 +214,7 @@ export class AnalyticsService {
         renewalsInRange: renewals[0]?.count ?? 0,
       },
       queues: { pendingPayments, pendingBrandApplications: brandsByStatus.find((b) => b._id === BrandStatus.PENDING_REVIEW)?.count ?? 0, openReports },
-      // GMV is the value of orders placed between customers and brands — not Brandak revenue.
+      // GMV is the value of orders placed between customers and brands — not Fatrina revenue.
       orders: { count: orderStats[0]?.count ?? 0, gmv: round(orderStats[0]?.gmv ?? 0) },
     };
   }

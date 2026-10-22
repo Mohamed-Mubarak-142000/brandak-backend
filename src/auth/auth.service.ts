@@ -1,4 +1,4 @@
-import { HttpStatus, Injectable, UnauthorizedException } from '@nestjs/common';
+import { HttpStatus, Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import * as argon2 from 'argon2';
@@ -101,7 +101,10 @@ export class AuthService {
     const channel = identifier.includes('@') ? 'email' : 'phone';
     await this.otp
       .issue(user.id, OtpPurpose.RESET_PASSWORD, channel, channel === 'email' ? user.email : user.phone)
-      .catch(() => undefined);
+      // The response never says whether the account exists, but a failed send must be visible in the logs.
+      .catch((e: Error & { code?: string }) => {
+        if (e?.code !== 'OTP_COOLDOWN') new Logger('AuthService').error(`reset code not sent to user ${user.id}: ${e?.message}`);
+      });
   }
 
   /** Keeps the current session signed in and signs out every other device. */
