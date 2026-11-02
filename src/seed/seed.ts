@@ -6,7 +6,7 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import * as argon2 from 'argon2';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { AppModule } from '@/app.module';
 import { Role, StoreType } from '@/common/enums';
 import { Env } from '@/config/env';
@@ -14,7 +14,8 @@ import { Brand } from '@/brands/brand.schema';
 import { Category } from '@/categories/category.schema';
 import { SubscriptionPlan } from '@/subscriptions/plan.schema';
 import { User } from '@/users/user.schema';
-import { CATEGORIES, PLANS } from './seed-data';
+import { PLANS } from './seed-data';
+import { TAXONOMY, TaxonomyNode } from './taxonomy';
 
 export async function seed(app: { get: <T>(token: any) => T }, log = console.log) {
   const plans = app.get<Model<SubscriptionPlan>>(getModelToken(SubscriptionPlan.name));
@@ -26,12 +27,11 @@ export async function seed(app: { get: <T>(token: any) => T }, log = console.log
     // Insert only: never overwrite prices an admin has edited.
     await plans.updateOne({ code: plan.code }, { $setOnInsert: plan }, { upsert: true });
   }
-  for (const category of CATEGORIES) {
-    await categories.updateOne({ slug: category.slug }, { $setOnInsert: { ...category, parentId: null } }, { upsert: true });
-    // Categories seeded before store types existed get theirs; an admin edit is never overwritten.
-    await categories.updateOne({ slug: category.slug, storeTypes: { $exists: false } }, { $set: { storeTypes: category.storeTypes } });
-  }
-  log(`Seeded ${PLANS.length} plans and ${CATEGORIES.length} categories`);
+  // Categories from before the tree get their level and ancestors (from parentId) first.
+  const placed = await placeExisting(categories);
+  if (placed) log(`Placed ${placed} existing categories in the tree`);
+  const seeded = await seedTree(categories, TAXONOMY, null);
+  log(`Seeded ${PLANS.length} plans and ${seeded} categories`);
 
   // Stores created before storeType existed were all brands.
   const brands = app.get<Model<Brand>>(getModelToken(Brand.name));
@@ -54,6 +54,60 @@ export async function seed(app: { get: <T>(token: any) => T }, log = console.log
       log(`Created super admin ${email} — change the password after first login`);
     }
   }
+}
+
+type Placed = { _id: Types.ObjectId; level: number; ancestors: Types.ObjectId[]; storeTypes: StoreType[] };
+
+/**
+ * Inserts missing categories under their parents. Existing ones are never overwritten (an admin
+ * may have renamed, moved or re-templated them); fields added since they were created are filled in.
+ */
+async function seedTree(categories: Model<Category>, nodes: TaxonomyNode[], parent: Placed | null): Promise<number> {
+  let count = 0;
+  for (const [i, node] of nodes.entries()) {
+    const { children, template, storeTypes: ownTypes, ...fields } = node;
+    const storeTypes = ownTypes ?? parent?.storeTypes ?? [];
+    const placement = parent
+      ? { parentId: parent._id, level: parent.level + 1, ancestors: [...parent.ancestors, parent._id] }
+      : { parentId: null, level: 0, ancestors: [] };
+    await categories.updateOne(
+      { slug: node.slug },
+      { $setOnInsert: { ...fields, sortOrder: node.sortOrder ?? i + 1, ...placement, storeTypes, template: template ?? null, isActive: true } },
+      { upsert: true },
+    );
+    await categories.updateOne({ slug: node.slug, storeTypes: { $exists: false } }, { $set: { storeTypes } });
+    await categories.updateOne({ slug: node.slug, template: { $exists: false } }, { $set: { template: template ?? null } });
+    count++;
+    const doc = await categories.findOne({ slug: node.slug }).lean();
+    if (children?.length && doc && (doc.level ?? 0) < 2) {
+      count += await seedTree(categories, children, {
+        _id: doc._id,
+        level: doc.level ?? 0,
+        ancestors: doc.ancestors ?? [],
+        storeTypes: doc.storeTypes ?? storeTypes,
+      });
+    }
+  }
+  return count;
+}
+
+/** Fills level/ancestors from parentId for categories created before they existed. */
+async function placeExisting(categories: Model<Category>) {
+  const all = await categories.find().select('_id parentId level ancestors').lean();
+  const byId = new Map(all.map((c) => [c._id.toString(), c]));
+  let placed = 0;
+  for (const c of all) {
+    if (c.level !== undefined && c.ancestors !== undefined) continue;
+    const ancestors: Types.ObjectId[] = [];
+    let p = c.parentId ? byId.get(c.parentId.toString()) : undefined;
+    while (p && ancestors.length < 5) {
+      ancestors.unshift(p._id);
+      p = p.parentId ? byId.get(p.parentId.toString()) : undefined;
+    }
+    await categories.updateOne({ _id: c._id }, { $set: { ancestors, level: Math.min(ancestors.length, 2) } });
+    placed++;
+  }
+  return placed;
 }
 
 if (require.main === module) {

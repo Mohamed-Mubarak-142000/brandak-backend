@@ -14,6 +14,8 @@ import { activeSalePercent, salePrice } from '@/promotions/price-math';
 import { escapeRegex, normalizeSearchText } from '@/common/utils/text';
 import { BrandsService } from '@/brands/brands.service';
 import { CategoriesService } from '@/categories/categories.service';
+import { checkAgainstTemplate, TemplateInput } from '@/categories/category-template';
+import { Brand } from '@/brands/brand.schema';
 import { SubscriptionsService } from '@/subscriptions/subscriptions.service';
 import { UploadsService } from '@/uploads/uploads.service';
 import { Product, ProductDocument, Variant } from './product.schema';
@@ -62,10 +64,13 @@ export class ProductsService {
     if (total >= MAX_TOTAL_PRODUCTS) {
       throw AppError.unprocessable('PRODUCT_LIMIT', 'Maximum number of products reached');
     }
-    const [categoryId] = await this.categories.requireActive([dto.categoryId]);
+    const brand = await this.brands.getById(brandId);
+    const categoryId = await this.categories.requireProductCategory(dto.categoryId, brand);
     const status = dto.status ?? ProductStatus.DRAFT;
     if (status === ProductStatus.ACTIVE) await this.assertCanPublish(brandId);
     this.assertCompareAtPrice(dto.price, dto.compareAtPrice);
+    const wholesale = wholesaleFrom(dto.wholesale, dto.price);
+    const fit = await this.fitTemplate(brand, categoryId, { specs: dto.specs, variants: dto.variants, unit: dto.unit ?? '', wholesale }, status === ProductStatus.ACTIVE);
 
     const product = new this.products({
       brandId: new Types.ObjectId(brandId),
@@ -76,7 +81,9 @@ export class ProductsService {
       price: dto.price,
       compareAtPrice: dto.compareAtPrice ?? null,
       sale: await this.saleFrom(dto.sale),
-      wholesale: wholesaleFrom(dto.wholesale, dto.price),
+      wholesale,
+      unit: fit.unit,
+      specs: fit.specs,
       variants: dto.variants.map(toVariant),
       tags: dto.tags ?? [],
       status,
@@ -90,7 +97,14 @@ export class ProductsService {
 
   async update(userId: string, brandId: string, id: string, dto: UpdateProductDto) {
     const product = await this.ownedOrThrow(brandId, id);
-    if (dto.categoryId) [product.categoryId] = await this.categories.requireActive([dto.categoryId]);
+    const brand = await this.brands.getById(brandId);
+    const before = {
+      sizes: product.variants.map((v) => v.size?.trim() ?? '').filter(Boolean),
+      colors: product.variants.map((v) => v.color?.trim() ?? '').filter(Boolean),
+    };
+    // Products filed before the category tree keep their category until the store moves them.
+    const recategorised = !!dto.categoryId && dto.categoryId !== product.categoryId.toString();
+    if (recategorised) product.categoryId = await this.categories.requireProductCategory(dto.categoryId!, brand);
     if (dto.title) product.title = dto.title.trim();
     if (dto.description !== undefined) product.description = dto.description;
     if (dto.price !== undefined) product.price = dto.price;
@@ -106,6 +120,25 @@ export class ProductsService {
       product.images.forEach((img, i) => (img.color = cleanColor(dto.imageColors![i])));
     }
     if (dto.variants) this.applyVariants(product, dto.variants);
+
+    const nextStatus = dto.status ?? product.status;
+    const templateTouched = recategorised || !!dto.specs || !!dto.variants || dto.unit !== undefined || dto.wholesale !== undefined;
+    if (templateTouched || dto.status === ProductStatus.ACTIVE) {
+      const fit = await this.fitTemplate(
+        brand,
+        product.categoryId,
+        {
+          specs: dto.specs ?? product.specs,
+          variants: product.variants,
+          unit: dto.unit ?? (recategorised ? product.unit : undefined),
+          wholesale: product.wholesale,
+          existingAxes: recategorised ? undefined : before,
+        },
+        nextStatus === ProductStatus.ACTIVE,
+      );
+      if (dto.specs || recategorised) product.specs = fit.specs;
+      if (dto.unit) product.unit = fit.unit;
+    }
 
     const firstPublish = dto.status === ProductStatus.ACTIVE && !product.publishedAt;
     const newSale = !!dto.sale && activeSalePercent(product.sale) > 0;
@@ -123,6 +156,21 @@ export class ProductsService {
     if (firstPublish) await this.alerts.notifyFollowers(product.toObject(), 'NEW_PRODUCT');
     else if (newSale && product.status === ProductStatus.ACTIVE) await this.alerts.notifyFollowers(product.toObject(), 'NEW_SALE');
     return product.toObject();
+  }
+
+  /**
+   * Holds a product to its category's template: known fields only, valid sizes and units, and —
+   * when it goes live — every required field and a warehouse's quantity prices. An empty unit
+   * means the category's default; an undefined one is not checked (unchanged on an edit).
+   */
+  private async fitTemplate(brand: Pick<Brand, 'storeType'>, categoryId: Types.ObjectId, input: TemplateInput, publishing: boolean) {
+    const t = await this.categories.template(categoryId.toString(), brand.storeType);
+    const unit = input.unit === undefined || input.unit === null ? undefined : input.unit.trim() || t.units[0];
+    const { specs, problems } = checkAgainstTemplate(t, { ...input, unit }, publishing);
+    if (problems.length) {
+      throw AppError.unprocessable(problems[0].code, problems[0].message, problems.map((p) => ({ field: p.code, reason: p.message })));
+    }
+    return { specs, unit: unit ?? t.units[0] };
   }
 
   /** Validates and normalises a sale (a season sale must fit the season). null clears it. */
@@ -179,6 +227,9 @@ export class ProductsService {
     if (publish && product.status === ProductStatus.DRAFT && product.images.length) {
       try {
         await this.assertCanPublish(brandId, product._id);
+        // Required fields (or a warehouse's quantity prices) missing: stays a draft to finish in the app.
+        const brand = await this.brands.getById(brandId);
+        await this.fitTemplate(brand, product.categoryId, { specs: product.specs, variants: product.variants, wholesale: product.wholesale }, true);
         product.status = ProductStatus.ACTIVE;
         product.publishedAt ??= new Date();
       } catch (e) {
@@ -238,7 +289,11 @@ export class ProductsService {
     const filter: FilterQuery<Product> = {
       status: ProductStatus.ACTIVE,
       brandId: {
-        $in: await this.brands.visibleBrandIds({ ...(query.brandId ? { _id: query.brandId } : {}), ...(query.resellable ? { 'settings.allowResellers': true } : {}) }),
+        $in: await this.brands.visibleBrandIds({
+          ...(query.brandId ? { _id: query.brandId } : {}),
+          ...(query.resellable ? { 'settings.allowResellers': true } : {}),
+          ...(query.storeType ? this.brands.storeTypeFilter(query.storeType) : {}),
+        }),
       },
     };
     const categoryIds = [...(query.categoryId ? [query.categoryId] : []), ...(query.categoryIds ?? [])];
@@ -255,6 +310,7 @@ export class ProductsService {
       };
     }
     if (query.inStock) filter.totalStock = { $gt: 0 };
+    if (query.specs?.length) filter.$and = query.specs.map(specFilter);
     if (query.onSale || query.campaignId || query.sort === 'discount') {
       const now = new Date();
       Object.assign(filter, { 'sale.startsAt': { $lte: now }, 'sale.endsAt': { $gt: now } });
@@ -322,6 +378,8 @@ export class ProductsService {
       .lean();
     const brand = product?.brandId as unknown as Parameters<BrandsService['isVisible']>[0] | undefined;
     if (!product || !brand || !this.brands.isVisible(brand)) throw AppError.notFound('Product');
+    const t = await this.categories.template(product.categoryId.toString(), (brand as { storeType?: Brand['storeType'] }).storeType).catch(() => null);
+    const defs = new Map(t?.specs.map((s, i) => [s.key, { ...s, order: i }]) ?? []);
     return {
       ...this.toCard(product),
       description: product.description,
@@ -329,7 +387,17 @@ export class ProductsService {
       /** Same order as images; a colour shows only its own photos (null = every colour). */
       imageColors: product.images.map((i) => i.color ?? null),
       categoryId: product.categoryId.toString(),
+      categoryPath: await this.categories.pathName(product.categoryId.toString()),
       tags: product.tags,
+      /** What the variant fields are called in this category ("المساحة" for phones). */
+      sizeLabel: t?.size?.label ?? 'المقاس',
+      colorLabel: t?.color?.label ?? 'اللون',
+      sizeGuide: t?.sizeGuide ?? null,
+      /** Template answers with their labels, in the template's order. */
+      specs: (product.specs ?? [])
+        .filter((s) => defs.has(s.key))
+        .sort((a, b) => defs.get(a.key)!.order - defs.get(b.key)!.order)
+        .map((s) => ({ key: s.key, label: defs.get(s.key)!.labelAr, value: s.value, unit: defs.get(s.key)!.unit ?? null })),
       variants: product.variants.map((v) => ({
         id: v._id.toString(),
         size: v.size ?? null,
@@ -407,6 +475,7 @@ export class ProductsService {
       ratingAvg: p.ratingAvg,
       ratingCount: p.ratingCount,
       wholesale: p.wholesale ?? null,
+      unit: p.unit ?? 'قطعة',
       brand: brand?.name
         ? { id: brand._id.toString(), name: brand.name, slug: brand.slug, logoUrl: optimizedImage(brand.logo?.url, IMAGE_WIDTH.logo) }
         : { id: String(p.brandId) },
@@ -430,7 +499,10 @@ const cleanColor = (c?: string | null) => c?.trim().slice(0, 30) || null;
  * Normalises wholesale terms: tiers sorted by quantity, each cheaper than the one before and
  * than the regular price. Returns null when there is nothing wholesale about the product.
  */
-export function wholesaleFrom(dto: { minQty: number; tiers: { minQty: number; price: number }[] } | null | undefined, price: number) {
+export function wholesaleFrom(
+  dto: { minQty: number; tiers: { minQty: number; price: number }[]; pack?: { unit: string; qty: number } | null } | null | undefined,
+  price: number,
+) {
   if (!dto) return null;
   const tiers = [...dto.tiers].sort((a, b) => a.minQty - b.minQty).map((t) => ({ minQty: t.minQty, price: t.price }));
   tiers.forEach((t, i) => {
@@ -439,6 +511,18 @@ export function wholesaleFrom(dto: { minQty: number; tiers: { minQty: number; pr
       throw AppError.unprocessable('INVALID_WHOLESALE', 'Each quantity price must be lower than the regular price and the tier before it');
     }
   });
-  if (!tiers.length && dto.minQty <= 1) return null;
-  return { minQty: dto.minQty, tiers };
+  const pack = dto.pack?.unit?.trim() && dto.pack.qty >= 2 ? { unit: dto.pack.unit.trim(), qty: dto.pack.qty } : null;
+  if (!tiers.length && dto.minQty <= 1 && !pack) return null;
+  return { minQty: dto.minQty, tiers, pack };
+}
+
+/** `key:value` from the query; numbers and yes/no match however they were stored. */
+function specFilter(pair: string): FilterQuery<Product> {
+  const i = pair.indexOf(':');
+  const key = pair.slice(0, i);
+  const raw = pair.slice(i + 1).trim();
+  const values: (string | number | boolean)[] = [raw];
+  if (raw !== '' && Number.isFinite(Number(raw))) values.push(Number(raw));
+  if (raw === 'true' || raw === 'false') values.push(raw === 'true');
+  return { specs: { $elemMatch: { key, value: { $in: values } } } };
 }

@@ -30,10 +30,10 @@ describe('product import sheet', () => {
   });
 
   it('reads back its own template', async () => {
-    const file = await buildTemplate([{ nameAr: 'ملابس' }]);
+    const file = await buildTemplate([{ path: 'ملابس › رجالي › تيشيرتات' }]);
     const rows = await readSheet(file, 'template.xlsx');
     expect(rows).toHaveLength(4);
-    expect(rows[0].values).toMatchObject({ title: 'تيشيرت قطن أوفرسايز', price: '350', stock: '10', category: 'ملابس' });
+    expect(rows[0].values).toMatchObject({ title: 'تيشيرت قطن أوفرسايز', price: '350', stock: '10', category: 'ملابس › رجالي › تيشيرتات' });
     expect(rows[2].values).toMatchObject({ size: 'L', color: 'أبيض', variantPrice: '370' });
   });
 });

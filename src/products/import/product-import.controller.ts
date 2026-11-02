@@ -64,9 +64,16 @@ export class ProductImportController {
   @Public()
   @Get('product-import/template.xlsx')
   async template(@Res() res: Response) {
+    // Only the ends of the tree, written as full paths: that's what a product is filed under.
     const all = await this.categories.listActive();
     const names = new Map(all.map((c) => [c._id.toString(), c.nameAr]));
-    const file = await buildTemplate(all.map((c) => ({ nameAr: c.nameAr, parent: c.parentId ? names.get(c.parentId.toString()) : undefined })));
+    const parents = new Set(all.map((c) => String(c.parentId)));
+    const file = await buildTemplate(
+      all
+        .filter((c) => !parents.has(c._id.toString()))
+        .map((c) => ({ path: [...(c.ancestors ?? []), c._id].map((a) => names.get(String(a))).filter(Boolean).join(' › ') }))
+        .sort((a, b) => a.path.localeCompare(b.path, 'ar')),
+    );
     res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('content-disposition', `attachment; filename="fatrina-products-template.xlsx"`);
     res.setHeader('cache-control', 'public, max-age=3600');

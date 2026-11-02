@@ -24,7 +24,8 @@ describe('Fatrina reach: pixels, insights, weekly report, web store (e2e)', () =
     ctx = await createTestApp((b) => b.overrideProvider(TRACKING_HTTP).useValue(fakeHttp));
     admin = await loginAdmin(ctx);
     const cats = await ctx.http().get(api('/categories')).expect(200);
-    categoryId = cats.body.data[0]._id;
+    // Products are filed under a sub-category; the store applies with it too.
+    categoryId = cats.body.data.find((c: any) => c.slug === 'fashion-men-tshirts')._id;
 
     const owner = await registerUser(ctx, 'Pixel Owner');
     const logoFileId = await upload(ctx, owner.token, 'BRAND_LOGO');

@@ -42,7 +42,8 @@ describe('Fatrina growth features (e2e)', () => {
     ctx = await createTestApp((b) => b.overrideProvider(PRODUCT_AI).useValue(fakeAi));
     admin = await loginAdmin(ctx);
     const cats = await ctx.http().get(api('/categories')).expect(200);
-    categoryId = cats.body.data[0]._id;
+    // "Other" is offered to every store type and has no sub-categories.
+    categoryId = cats.body.data.find((c: any) => c.slug === 'other')._id;
   });
 
   afterAll(async () => {
@@ -108,7 +109,7 @@ describe('Fatrina growth features (e2e)', () => {
     const bad = await createProduct(store.owner.token, { wholesale: { minQty: 6, tiers: [{ minQty: 12, price: 120 }] } }, 422);
     expect(bad.body.error.code).toBe('INVALID_WHOLESALE');
     const product = (await createProduct(store.owner.token, { wholesale: { minQty: 6, tiers: [{ minQty: 50, price: 70 }, { minQty: 12, price: 80 }] } }, 201)).body.data;
-    expect(product.wholesale).toEqual({ minQty: 6, tiers: [{ minQty: 12, price: 80 }, { minQty: 50, price: 70 }] });
+    expect(product.wholesale).toEqual({ minQty: 6, tiers: [{ minQty: 12, price: 80 }, { minQty: 50, price: 70 }], pack: null });
 
     const card = await ctx.http().get(api(`/products/${product._id}`)).expect(200);
     expect(card.body.data.wholesale.tiers).toHaveLength(2);
@@ -134,7 +135,7 @@ describe('Fatrina growth features (e2e)', () => {
 
   it('lets customers collect from the store with no shipping fee', async () => {
     const store = await onboardBrand('Pickup Showroom', 'SHOWROOM');
-    const product = (await createProduct(store.owner.token, {}, 201)).body.data;
+    const product = (await createProduct(store.owner.token, { specs: [{ key: 'condition', value: 'جديد' }] }, 201)).body.data;
     const c = await newCustomer('Pickup Customer');
     await ctx.http().post(api(`/carts/${store.brandId}/items`)).set(auth(c.token)).send({ productId: product._id, variantId: product.variants[0]._id, quantity: 2 }).expect(201);
 

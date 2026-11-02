@@ -335,7 +335,7 @@ export class BrandsService {
   }
 
   /** Stores created before storeType existed have no value and count as BRAND. */
-  private storeTypeFilter(type: StoreType): FilterQuery<Brand> {
+  storeTypeFilter(type: StoreType): FilterQuery<Brand> {
     return type === StoreType.BRAND ? { storeType: { $in: [StoreType.BRAND, null] } } : { storeType: type };
   }
 

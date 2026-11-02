@@ -69,6 +69,8 @@ const num = (s?: string) => {
 };
 const toLatinDigits = (s: string) => s.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/٫/g, '.');
 const norm = (s: string) => normalizeSearchText(s);
+/** "ملابس › رجالي › تيشيرتات", "ملابس > رجالي > تيشيرتات" and "ملابس/رجالي/تيشيرتات" all match. */
+const normPath = (s: string) => s.split(/[›>/\\|»]+/).map(norm).filter(Boolean).join('>');
 
 @Injectable()
 export class ProductImportService {
@@ -161,13 +163,31 @@ export class ProductImportService {
   private async build(brandId: string, rows: SheetRow[]): Promise<ImportItem[]> {
     const brand = await this.brands.getById(brandId);
     const cats = await this.categories.listActive(brand.storeType);
-    const byName = new Map<string, { id: string; name: string }>();
-    for (const c of cats) {
-      const ref = { id: c._id.toString(), name: c.nameAr };
-      for (const n of [c.nameAr, c.nameEn, c.slug]) if (n) byName.set(norm(n), ref);
-    }
     const brandCats = brand.categoryIds.map((id) => id.toString());
-    const defaultCat = brandCats.length === 1 ? cats.find((c) => c._id.toString() === brandCats[0]) : undefined;
+    const nameOf = new Map(cats.map((c) => [c._id.toString(), c.nameAr]));
+    const parents = new Set(cats.map((c) => String(c.parentId)));
+    type Ref = { id: string; name: string; leaf: boolean; inStore: boolean };
+    const refs: Ref[] = cats.map((c) => {
+      const path = [...(c.ancestors ?? []), c._id].map(String);
+      return {
+        id: c._id.toString(),
+        name: path.map((a) => nameOf.get(a)).filter(Boolean).join(' › '),
+        leaf: !parents.has(c._id.toString()),
+        inStore: !brandCats.length || path.some((a) => brandCats.includes(a)),
+      };
+    });
+    // A short name used in two places ("تيشيرتات" for men and women) is ambiguous: null.
+    const byName = new Map<string, Ref | null>();
+    const add = (text: string | undefined, ref: Ref) => {
+      const k = text && normPath(text);
+      if (!k) return;
+      const cur = byName.get(k);
+      byName.set(k, cur === undefined || cur?.id === ref.id ? ref : null);
+    };
+    refs.forEach((ref) => add(ref.name, ref));
+    cats.forEach((c, i) => [c.nameAr, c.nameEn, c.slug].forEach((n) => add(n, refs[i])));
+    const storeLeaves = refs.filter((r) => r.leaf && r.inStore);
+    const defaultCat = brandCats.length && storeLeaves.length === 1 ? storeLeaves[0] : undefined;
 
     const existing = new Set(
       (await this.products.find({ brandId: new Types.ObjectId(brandId), status: { $ne: ProductStatus.ARCHIVED } }).select('title').lean()).map((p) =>
@@ -204,15 +224,18 @@ export class ProductImportService {
       let categoryName: string | null = null;
       const catText = first('category');
       if (catText) {
-        const found = byName.get(norm(catText));
-        if (found) {
+        const found = byName.get(normPath(catText));
+        if (found === null) errors.push(`القسم "${catText}" موجود في أكتر من مكان. اكتبه بالمسار زي شيت الأقسام (مثلاً: ملابس › رجالي › تيشيرتات)`);
+        else if (!found) errors.push(`القسم "${catText}" مش موجود. اكتبه زي شيت الأقسام في القالب`);
+        else if (!found.leaf) errors.push(`"${found.name}" فيه أقسام فرعية، اختار واحد منهم من شيت الأقسام`);
+        else {
           categoryId = found.id;
           categoryName = found.name;
-          if (brandCats.length && !brandCats.includes(found.id)) warnings.push(`القسم "${found.name}" مش من أقسام متجرك`);
-        } else errors.push(`القسم "${catText}" مش موجود. اكتبه زي شيت الأقسام في القالب`);
+          if (!found.inStore) warnings.push(`القسم "${found.name}" مش من أقسام متجرك`);
+        }
       } else if (defaultCat) {
-        categoryId = defaultCat._id.toString();
-        categoryName = defaultCat.nameAr;
+        categoryId = defaultCat.id;
+        categoryName = defaultCat.name;
       } else errors.push('اكتب القسم (متجرك ليه أكتر من قسم)');
 
       const variants: ImportVariant[] = [];

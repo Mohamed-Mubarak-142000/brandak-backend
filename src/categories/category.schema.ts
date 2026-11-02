@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { StoreType } from '@/common/enums';
+import { CategoryTemplate } from './category-template';
 
 @Schema({ timestamps: true })
 export class Category {
@@ -15,6 +16,18 @@ export class Category {
 
   @Prop({ type: Types.ObjectId, ref: 'Category', default: null })
   parentId: Types.ObjectId | null;
+
+  /** 0 = top-level section, 1 = category, 2 = sub-category. Kept in sync with parentId. */
+  @Prop({ default: 0, min: 0, max: 2 })
+  level: number;
+
+  /** Parents from the top down, so "everything under X" is one indexed query. */
+  @Prop({ type: [Types.ObjectId], default: [] })
+  ancestors: Types.ObjectId[];
+
+  /** What a product here asks for; inherited by sub-categories (see category-template.ts). */
+  @Prop({ type: Object, default: null })
+  template: CategoryTemplate | null;
 
   @Prop()
   icon?: string;
@@ -40,3 +53,4 @@ export class Category {
 export const CategorySchema = SchemaFactory.createForClass(Category);
 CategorySchema.index({ parentId: 1, sortOrder: 1 });
 CategorySchema.index({ storeTypes: 1 });
+CategorySchema.index({ ancestors: 1 });

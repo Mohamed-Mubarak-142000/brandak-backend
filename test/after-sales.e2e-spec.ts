@@ -21,7 +21,8 @@ describe('Fatrina after-sales (e2e)', () => {
     ctx = await createTestApp();
     admin = await loginAdmin(ctx);
     const cats = await ctx.http().get(api('/categories')).expect(200);
-    categoryId = cats.body.data[0]._id;
+    // Products are filed under a sub-category; the store applies with it too.
+    categoryId = cats.body.data.find((c: any) => c.slug === 'fashion-men-tshirts')._id;
   });
 
   afterAll(async () => {

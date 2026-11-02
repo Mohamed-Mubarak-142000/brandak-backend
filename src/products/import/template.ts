@@ -5,7 +5,7 @@ const BRAND = 'FFF16B21';
 const SOFT = 'FFFFEADB';
 
 /** The import template: a products sheet with examples, the category names, and instructions. */
-export async function buildTemplate(categories: { nameAr: string; parent?: string }[]): Promise<Buffer> {
+export async function buildTemplate(categories: { path: string }[]): Promise<Buffer> {
   const book = new ExcelJS.Workbook();
   book.creator = 'Fatrina';
 
@@ -21,7 +21,7 @@ export async function buildTemplate(categories: { nameAr: string; parent?: strin
     cell.note = COLUMNS[i - 1].note;
   });
 
-  const cat = categories[0]?.nameAr ?? '';
+  const cat = categories.find((c) => c.path.includes('تيشيرت'))?.path ?? categories[0]?.path ?? '';
   const examples = [
     { title: 'تيشيرت قطن أوفرسايز', price: 350, compareAtPrice: 450, size: 'M', color: 'أسود', stock: 10, category: cat, description: 'قطن 100%، مريح للبس اليومي', tags: 'صيفي، قطن، أوفرسايز', images: 'https://example.com/tshirt-1.jpg, https://example.com/tshirt-2.jpg' },
     { title: 'تيشيرت قطن أوفرسايز', size: 'L', color: 'أسود', stock: 8 },
@@ -34,10 +34,7 @@ export async function buildTemplate(categories: { nameAr: string; parent?: strin
 
   // Category column: dropdown from the categories sheet.
   const cats = book.addWorksheet('الأقسام', { views: [{ rightToLeft: true }] });
-  cats.columns = [
-    { header: 'القسم', key: 'nameAr', width: 28 },
-    { header: 'تابع لـ', key: 'parent', width: 24 },
-  ];
+  cats.columns = [{ header: 'القسم', key: 'path', width: 48 }];
   cats.getRow(1).font = { bold: true };
   categories.forEach((c) => cats.addRow(c));
   const catCol = COLUMNS.findIndex((c) => c.id === 'category') + 1;

@@ -30,7 +30,7 @@ export const COLUMNS: { id: ColumnId; header: string; aliases: string[]; width: 
   { id: 'color', header: 'اللون', aliases: ['اللون', 'color', 'colour'], width: 12, note: 'مثال: أسود' },
   { id: 'stock', header: 'المخزون *', aliases: ['المخزون', 'الكمية', 'stock', 'quantity', 'qty'], width: 10, note: 'عدد القطع المتاحة' },
   { id: 'variantPrice', header: 'سعر مختلف للمقاس', aliases: ['سعر مختلف للمقاس', 'سعر مختلف', 'variant price', 'variant_price'], width: 16, note: 'لو المقاس ده سعره مختلف' },
-  { id: 'category', header: 'القسم', aliases: ['القسم', 'category'], width: 16, note: 'زي ما مكتوب في شيت الأقسام. فاضي = قسم متجرك لو ليه قسم واحد' },
+  { id: 'category', header: 'القسم', aliases: ['القسم', 'category'], width: 16, note: 'القسم الفرعي زي ما مكتوب في شيت الأقسام (مثلاً: ملابس › رجالي › تيشيرتات). فاضي = قسم متجرك لو ليه قسم واحد' },
   { id: 'description', header: 'الوصف', aliases: ['الوصف', 'description'], width: 40, note: 'الخامة، المقاسات، طريقة الغسيل' },
   { id: 'tags', header: 'كلمات مفتاحية', aliases: ['كلمات مفتاحية', 'الكلمات المفتاحية', 'tags'], width: 24, note: 'افصل بينها بفاصلة' },
   { id: 'images', header: 'روابط الصور', aliases: ['روابط الصور', 'الصور', 'صور', 'images', 'image urls', 'image_urls'], width: 40, note: 'روابط مباشرة لصور (https)، افصل بينها بفاصلة. لحد 10 صور' },

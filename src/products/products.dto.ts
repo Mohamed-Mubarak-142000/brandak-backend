@@ -6,6 +6,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsDefined,
   IsEnum,
   IsIn,
   IsInt,
@@ -14,12 +15,13 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
-import { ProductStatus } from '@/common/enums';
+import { ProductStatus, StoreType } from '@/common/enums';
 import { PageQueryDto } from '@/common/pagination';
 
 export class VariantDto {
@@ -75,6 +77,18 @@ export class WholesaleTierDto {
   price: number;
 }
 
+/** The wholesale unit, e.g. a carton (كرتونة) of 24 pieces. */
+export class WholesalePackDto {
+  @IsString()
+  @Length(1, 20)
+  unit: string;
+
+  @IsInt()
+  @Min(2)
+  @Max(10_000)
+  qty: number;
+}
+
 export class WholesaleDto {
   /** Fewest pieces of this product per order (all sizes and colours together). */
   @IsInt()
@@ -87,6 +101,20 @@ export class WholesaleDto {
   @ValidateNested({ each: true })
   @Type(() => WholesaleTierDto)
   tiers: WholesaleTierDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => WholesalePackDto)
+  pack?: WholesalePackDto | null;
+}
+
+/** One answer to a category template field; checked against the template by the service. */
+export class SpecValueDto {
+  @Matches(/^[a-z][a-z0-9_]{1,30}$/)
+  key: string;
+
+  @IsDefined()
+  value: string | number | boolean;
 }
 
 export class CreateProductDto {
@@ -153,6 +181,20 @@ export class CreateProductDto {
   @MaxLength(30, { each: true })
   tags?: string[];
 
+  /** One of the category's selling units; defaults to its first. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  unit?: string;
+
+  /** Answers to the category template's fields. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(40)
+  @ValidateNested({ each: true })
+  @Type(() => SpecValueDto)
+  specs?: SpecValueDto[];
+
   /** ACTIVE publishes the product (needs an active subscription within plan limits). */
   @IsOptional()
   @IsIn([ProductStatus.DRAFT, ProductStatus.ACTIVE])
@@ -194,6 +236,16 @@ export class ProductsQueryDto extends PageQueryDto {
   @IsMongoId({ each: true })
   categoryIds?: string[];
   @IsOptional() @IsMongoId() brandId?: string;
+  /** Only products from this kind of store. */
+  @IsOptional() @IsEnum(StoreType) storeType?: StoreType;
+
+  /** Template field filters, key:value pairs separated by commas (brand:Samsung,condition:جديد). */
+  @IsOptional()
+  @Transform(({ value }) => (Array.isArray(value) ? value : String(value).split(',')).map((v: string) => v.trim()).filter(Boolean))
+  @IsArray()
+  @ArrayMaxSize(10)
+  @Matches(/^[a-z][a-z0-9_]{1,30}:.{1,60}$/, { each: true })
+  specs?: string[];
 
   @IsOptional()
   @Type(() => Number)

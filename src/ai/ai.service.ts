@@ -79,7 +79,7 @@ export class AiService {
       if (!created) throw AppError.unprocessable('AI_DAILY_LIMIT', `Up to ${this.dailyLimit} suggestions per day`);
     }
 
-    const categories = await this.categories.activeWithChildren(brand.categoryIds ?? []);
+    const categories = await this.categories.activeWithChildren(brand.categoryIds ?? [], brand.storeType);
     let raw: ProductDraft;
     try {
       raw = await this.ai.draft({ imageUrls: files.map((f) => f.url!), storeType: brand.storeType, categories });

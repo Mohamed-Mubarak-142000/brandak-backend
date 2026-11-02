@@ -66,9 +66,20 @@ export class Product {
   @Prop({ type: Object, default: null })
   sale: { percent: number; startsAt: Date; endsAt: Date; campaignId?: Types.ObjectId | null } | null;
 
-  /** Wholesale: a minimum per order and cheaper unit prices by quantity (mostly warehouses). */
+  /**
+   * Wholesale: a minimum per order and cheaper unit prices by quantity (always on for warehouses).
+   * `pack` describes the wholesale unit, e.g. a carton of 24 pieces; quantities stay in pieces.
+   */
   @Prop({ type: Object, default: null })
-  wholesale: { minQty: number; tiers: { minQty: number; price: number }[] } | null;
+  wholesale: { minQty: number; tiers: { minQty: number; price: number }[]; pack?: { unit: string; qty: number } | null } | null;
+
+  /** What one unit of stock is: قطعة, كيلو, كرتونة... (from the category's allowed units). */
+  @Prop({ default: 'قطعة' })
+  unit: string;
+
+  /** Values for the category template's fields (brand, warranty, material...). */
+  @Prop({ type: [{ _id: false, key: { type: String, required: true }, value: { type: Object, required: true } }], default: [] })
+  specs: { key: string; value: string | number | boolean }[];
 
   @Prop({ type: [VariantSchema], default: [] })
   variants: Variant[];
@@ -108,3 +119,4 @@ ProductSchema.index({ brandId: 1, status: 1, createdAt: -1 });
 ProductSchema.index({ status: 1, categoryId: 1, price: 1 });
 ProductSchema.index({ status: 1, publishedAt: -1 });
 ProductSchema.index({ searchText: 1 });
+ProductSchema.index({ 'specs.key': 1, 'specs.value': 1 });

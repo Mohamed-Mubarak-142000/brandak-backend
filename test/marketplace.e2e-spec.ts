@@ -1,5 +1,5 @@
 import { getModelToken } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Brand } from '@/brands/brand.schema';
 import { CartsService } from '@/carts/carts.service';
 import { OrdersService } from '@/orders/orders.service';
@@ -22,7 +22,8 @@ describe('Fatrina marketplace (e2e)', () => {
     ctx = await createTestApp();
     admin = await loginAdmin(ctx);
     const cats = await ctx.http().get(api('/categories')).expect(200);
-    categoryId = cats.body.data[0]._id;
+    // Products are filed under a sub-category; the store applies with it too.
+    categoryId = cats.body.data.find((c: any) => c.slug === 'fashion-men-tshirts')._id;
     const plans = await ctx.http().get(api('/subscription-plans')).expect(200);
     growthPlanId = plans.body.data.find((p: any) => p.code === 'GROWTH')._id;
   });
@@ -308,6 +309,52 @@ describe('Fatrina marketplace (e2e)', () => {
       expect(priced.body.data.every((p: any) => p.price >= 800 && p.price <= 1000)).toBe(true);
       const brandProducts = await ctx.http().get(api(`/brands/${slug}/products`)).expect(200);
       expect(brandProducts.body.data.map((p: any) => p.title)).not.toContain('Hidden draft');
+    });
+
+    it('files products in the category tree and holds them to its template', async () => {
+      const cats = (await ctx.http().get(api('/categories?storeType=SHOWROOM')).expect(200)).body.data;
+      const bySlug = (s: string) => cats.find((c: any) => c.slug === s);
+      const electronics = bySlug('electronics');
+      const phones = bySlug('elec-phones');
+      expect(phones).toMatchObject({ level: 1, parentId: electronics._id, ancestors: [electronics._id] });
+
+      // A phone's "size" is its storage; a showroom also states the condition.
+      const t = (await ctx.http().get(api(`/categories/${phones._id}/template?storeType=SHOWROOM`)).expect(200)).body.data;
+      expect(t.size).toMatchObject({ label: 'المساحة', values: expect.arrayContaining(['128GB', '256GB']) });
+      expect(t.specs.filter((s: any) => s.required).map((s: any) => s.key)).toEqual(expect.arrayContaining(['brand', 'condition']));
+
+      const showroom = await onboardBrand('Phone Showroom', { storeType: 'SHOWROOM' });
+      await ctx.http().patch(api('/brands/me')).set(auth(showroom.owner.token)).send({ categoryIds: [electronics._id] }).expect(200);
+      const phone = (body: Record<string, unknown>) =>
+        createProduct(showroom.owner.token, { title: 'آيفون 15', categoryId: phones._id, price: 40000, variants: [{ size: '128GB', color: 'أسود', stock: 2 }], ...body });
+
+      expect((await phone({ categoryId: electronics._id })).body.error.code).toBe('CATEGORY_NOT_LEAF');
+      // Fashion is open to showrooms but isn't one of this store's sections; groceries aren't for showrooms at all.
+      expect((await phone({ categoryId })).body.error.code).toBe('CATEGORY_NOT_IN_STORE');
+      const all = (await ctx.http().get(api('/categories')).expect(200)).body.data;
+      const rice = all.find((c: any) => c.slug === 'groc-rice-pasta');
+      expect((await phone({ categoryId: rice._id })).body.error.code).toBe('CATEGORY_NOT_FOR_STORE_TYPE');
+      expect((await phone({})).body.error.code).toBe('SPEC_REQUIRED');
+      // A draft can be saved half-done.
+      await phone({ status: 'DRAFT' }).then((r) => expect(r.status).toBe(201));
+      const ok = await phone({ specs: [{ key: 'brand', value: 'Apple' }, { key: 'condition', value: 'جديد' }, { key: 'warranty', value: '12' }, { key: 'junk', value: 'x' }] });
+      expect(ok.status).toBe(201);
+      expect(ok.body.data.specs).toEqual([
+        { key: 'brand', value: 'Apple' },
+        { key: 'condition', value: 'جديد' },
+        { key: 'warranty', value: 12 },
+      ]);
+
+      // Filtering by the top-level section finds products two levels down, and by template fields.
+      const inSection = await ctx.http().get(api(`/products?categoryId=${electronics._id}`)).expect(200);
+      expect(inSection.body.data.map((p: any) => p.id)).toContain(ok.body.data._id);
+      const filtered = await ctx.http().get(api(`/products?categoryId=${phones._id}&specs=brand:Apple,warranty:12&storeType=SHOWROOM`)).expect(200);
+      expect(filtered.body.data.map((p: any) => p.id)).toEqual([ok.body.data._id]);
+      expect((await ctx.http().get(api(`/products?specs=brand:Samsung&categoryId=${phones._id}`)).expect(200)).body.data).toEqual([]);
+
+      const page = (await ctx.http().get(api(`/products/${ok.body.data._id}`)).expect(200)).body.data;
+      expect(page).toMatchObject({ sizeLabel: 'المساحة', categoryPath: 'موبايلات وإلكترونيات › موبايلات', unit: 'قطعة' });
+      expect(page.specs[0]).toEqual({ key: 'brand', label: 'الماركة', value: 'Apple', unit: null });
     });
   });
 
@@ -763,6 +810,33 @@ describe('Fatrina marketplace (e2e)', () => {
       const self = await ctx.http().get(api('/users/me')).set(auth(admin)).expect(200);
       const res = await ctx.http().post(api(`/admin/users/${self.body.data.id}/delete`)).set(auth(admin)).expect(403);
       expect(res.body.error.code).toBe('SELF_ACTION');
+    });
+
+    it('re-seeds without overwriting, places old flat categories, and moves categories within three levels', async () => {
+      const { seed } = await import('@/seed/seed');
+      const categories = ctx.app.get(getModelToken('Category'));
+      // A category from before the tree: no level or ancestors, filed under a section by parentId.
+      const fashion = await categories.findOne({ slug: 'fashion' }).lean();
+      await categories.collection.insertOne({ nameAr: 'قديم', nameEn: 'Legacy', slug: 'legacy-flat', parentId: fashion._id, isActive: true, sortOrder: 0, storeTypes: [] });
+      await categories.updateOne({ slug: 'fashion-men' }, { $set: { nameAr: 'رجّالي (معدّل)' } });
+      const before = await categories.countDocuments();
+
+      await seed(ctx.app, () => undefined);
+      expect(await categories.countDocuments()).toBe(before);
+      expect(await categories.findOne({ slug: 'legacy-flat' }).lean()).toMatchObject({ level: 1, ancestors: [fashion._id] });
+      // An admin's edit survives the next seed.
+      expect((await categories.findOne({ slug: 'fashion-men' }).lean()).nameAr).toBe('رجّالي (معدّل)');
+
+      const id = (slug: string) => categories.findOne({ slug }).lean().then((c: any) => c._id.toString());
+      const [men, tshirts, women] = await Promise.all([id('fashion-men'), id('fashion-men-tshirts'), id('fashion-women')]);
+      // Too deep: "رجالي" has sub-categories, so it can't go under another category.
+      const tooDeep = await ctx.http().patch(api(`/admin/categories/${men}`)).set(auth(admin)).send({ parentId: women }).expect(422);
+      expect(tooDeep.body.error.code).toBe('TOO_DEEP');
+      await ctx.http().patch(api(`/admin/categories/${fashion._id}`)).set(auth(admin)).send({ parentId: tshirts }).expect(422);
+      // A sub-category moves to another branch and its ancestors follow.
+      await ctx.http().patch(api(`/admin/categories/${tshirts}`)).set(auth(admin)).send({ parentId: women }).expect(200);
+      expect(await categories.findOne({ slug: 'fashion-men-tshirts' }).lean()).toMatchObject({ level: 2, ancestors: [fashion._id, new Types.ObjectId(women)] });
+      await ctx.http().patch(api(`/admin/categories/${tshirts}`)).set(auth(admin)).send({ parentId: men }).expect(200);
     });
 
     it('hides deleted categories and plans and brings them back on restore', async () => {

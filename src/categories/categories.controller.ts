@@ -20,6 +20,14 @@ export class CategoriesController {
     return this.categories.listActive(query.storeType);
   }
 
+  /** What a product in this category asks for, as the given kind of store sees it. */
+  @Public()
+  @PublicCache(600)
+  @Get('categories/:id/template')
+  template(@Param('id', ParseObjectIdPipe) id: string, @Query() query: CategoriesQueryDto) {
+    return this.categories.template(id, query.storeType);
+  }
+
   /** Reference data for address forms and shipping zones. */
   @Public()
   @PublicCache(600)
@@ -39,6 +47,12 @@ export class AdminCategoriesController {
   @Get()
   list() {
     return this.categories.listAll();
+  }
+
+  /** Size lists and selling units for the template editor. */
+  @Get('presets')
+  presets() {
+    return this.categories.presets();
   }
 
   @Post()
