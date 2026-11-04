@@ -28,6 +28,8 @@ const envSchema = z.object({
   /** Google AI Studio key (free tier) for product drafts from a photo. Unset = feature hidden. */
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-flash-latest'),
+  /** Chats (store assistant, copilot) start with this model: Flash-Lite is fast and has the most free quota. */
+  ASSISTANT_MODEL: z.string().default('gemini-flash-lite-latest'),
   /** Product drafts per store per day. */
   AI_DAILY_LIMIT: z.coerce.number().int().positive().default(30),
   /** Google Play review accounts: their orders skip the email confirmation code (reviewers can't read that inbox). */

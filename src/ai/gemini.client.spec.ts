@@ -127,3 +127,25 @@ describe('GeminiClient.generate hedging', () => {
     expect(n).toBeGreaterThan(1);
   });
 });
+
+describe('GeminiClient resting models', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('skips a model that ran out of quota on the next request', async () => {
+    const client = new GeminiClient(config);
+    const asked: string[] = [];
+    jest.spyOn(global, 'fetch').mockImplementation(async (url) => {
+      const model = String(url).match(/models\/([^:]+):/)![1];
+      asked.push(model);
+      if (model === 'gemini-flash-latest') return { ok: false, status: 429, text: async () => 'quota', json: async () => ({}) } as never;
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ candidates: [text(model)] }) } as never;
+    });
+    const req = { contents: [{ role: 'user' as const, parts: [{ text: 'q' }] }] };
+    await client.generate(req);
+    expect(asked[0]).toBe('gemini-flash-latest');
+    asked.length = 0;
+    const res = await client.generate(req);
+    expect(asked).not.toContain('gemini-flash-latest');
+    expect(res.model).not.toBe('gemini-flash-latest');
+  });
+});

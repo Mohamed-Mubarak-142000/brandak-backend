@@ -153,12 +153,32 @@ export class GeminiClient {
   private readonly logger = new Logger(GeminiClient.name);
   private readonly key: string | undefined;
   private readonly model: string;
+  /** First model for chats (runWithTools); photo drafts keep GEMINI_MODEL. */
+  private readonly chatModel: string;
   /** The model that answered last; chats try it first for a minute (free models are often busy). */
   private lastGood: { model: string; at: number } | null = null;
+  /**
+   * Models to skip until a time (per server instance): out of quota (429) for 10 minutes, busy
+   * (503) for 30s, gone (404) for an hour — so a request doesn't spend seconds on known refusals.
+   */
+  private readonly resting = new Map<string, number>();
 
   constructor(config: ConfigService<Env, true>) {
     this.key = config.get('GEMINI_API_KEY', { infer: true }) || undefined;
     this.model = config.get('GEMINI_MODEL', { infer: true }) || LATEST_MODEL;
+    this.chatModel = config.get('ASSISTANT_MODEL', { infer: true }) || this.model;
+  }
+
+  private rest(model: string, status: number) {
+    const ms = status === 429 ? 600_000 : status === 404 ? 3_600_000 : status === 503 ? 30_000 : 0;
+    if (ms) this.resting.set(model, Date.now() + ms);
+  }
+
+  /** The chain without resting models (all of them if every model is resting). */
+  private awake(chain: string[]) {
+    const now = Date.now();
+    const up = chain.filter((m) => (this.resting.get(m) ?? 0) <= now);
+    return up.length ? up : chain;
   }
 
   get enabled() {
@@ -180,7 +200,7 @@ export class GeminiClient {
       ...(req.generationConfig ? { generationConfig: req.generationConfig } : {}),
     });
 
-    const chain = [...new Set([...(req.preferModel ? [req.preferModel] : []), this.model, ...FALLBACK_MODELS])];
+    const chain = this.awake([...new Set([...(req.preferModel ? [req.preferModel] : []), this.model, ...FALLBACK_MODELS])]);
     let model: string;
     let res: CallResult;
     if (req.hedgeAfterMs) {
@@ -190,6 +210,7 @@ export class GeminiClient {
       res = await this.call(model, body, Math.max(1_000, Math.min(timeoutMs, deadline - (Date.now() - started))));
       for (const next of chain.slice(1)) {
         if (!RETRY_STATUSES.includes(res.status) || Date.now() - started > budgetMs) break;
+        this.rest(model, res.status);
         this.logger.warn(`Gemini ${model} answered ${res.status}, trying ${next}`);
         model = next;
         const left = deadline - (Date.now() - started);
@@ -199,6 +220,7 @@ export class GeminiClient {
     }
     if (res.ok) this.lastGood = { model, at: Date.now() };
     if (!res.ok) {
+      this.rest(model, res.status);
       const detail = (await res.text()).slice(0, 300);
       this.logger.warn(`Gemini ${res.status}: ${detail}`);
       throw new GeminiError([429, 503, 504].includes(res.status) ? 'BUSY' : 'FAILED', res.status, `gemini ${res.status}`);
@@ -228,7 +250,7 @@ export class GeminiClient {
     const calls: ToolCallRecord[] = [];
     const trace: RoundTrace[] = [];
     const said: string[] = [];
-    let model: string | undefined = this.lastGood && Date.now() - this.lastGood.at < 60_000 ? this.lastGood.model : undefined;
+    let model: string | undefined = this.lastGood && Date.now() - this.lastGood.at < 60_000 ? this.lastGood.model : this.chatModel;
     for (let round = 1; round <= maxRounds; round++) {
       const last = round === maxRounds || Date.now() - started > budgetMs * 0.75;
       const roundStart = Date.now();
@@ -324,6 +346,7 @@ export class GeminiClient {
           inFlight.delete(model);
           if (settled) return;
           if (res.ok || !RETRY_STATUSES.includes(res.status)) return finish({ model, res });
+          this.rest(model, res.status);
           this.logger.warn(`Gemini ${model} answered ${res.status}`);
           last = { model, res };
           // Replace the failed call; if nothing is left to try and nothing is running, give up.
