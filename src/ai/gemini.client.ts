@@ -67,7 +67,14 @@ export interface GenerateRequest {
   startedAt?: number;
   /** Tried first (e.g. the model that answered the previous round of a tool loop). */
   preferModel?: string;
+  /**
+   * Chats: if the model hasn't answered after this long, the next model is asked in parallel and
+   * the first good answer wins (free models sometimes hang for the whole timeout). Off by default.
+   */
+  hedgeAfterMs?: number;
 }
+
+type CallResult = Pick<Response, 'ok' | 'status' | 'text' | 'json'>;
 
 export interface GenerateResult {
   candidate: GeminiCandidate | undefined;
@@ -174,15 +181,21 @@ export class GeminiClient {
     });
 
     const chain = [...new Set([...(req.preferModel ? [req.preferModel] : []), this.model, ...FALLBACK_MODELS])];
-    let model = chain[0];
-    let res = await this.call(model, body, Math.max(1_000, Math.min(timeoutMs, deadline - (Date.now() - started))));
-    for (const next of chain.slice(1)) {
-      if (!RETRY_STATUSES.includes(res.status) || Date.now() - started > budgetMs) break;
-      this.logger.warn(`Gemini ${model} answered ${res.status}, trying ${next}`);
-      model = next;
-      const left = deadline - (Date.now() - started);
-      if (left < 2_000) break;
-      res = await this.call(model, body, Math.min(left, Math.max(8_000, Math.min(timeoutMs, left))));
+    let model: string;
+    let res: CallResult;
+    if (req.hedgeAfterMs) {
+      ({ model, res } = await this.hedged(chain, body, { started, timeoutMs, budgetMs, deadline, hedgeAfterMs: req.hedgeAfterMs }));
+    } else {
+      model = chain[0];
+      res = await this.call(model, body, Math.max(1_000, Math.min(timeoutMs, deadline - (Date.now() - started))));
+      for (const next of chain.slice(1)) {
+        if (!RETRY_STATUSES.includes(res.status) || Date.now() - started > budgetMs) break;
+        this.logger.warn(`Gemini ${model} answered ${res.status}, trying ${next}`);
+        model = next;
+        const left = deadline - (Date.now() - started);
+        if (left < 2_000) break;
+        res = await this.call(model, body, Math.min(left, Math.max(8_000, Math.min(timeoutMs, left))));
+      }
     }
     if (res.ok) this.lastGood = { model, at: Date.now() };
     if (!res.ok) {
@@ -231,6 +244,7 @@ export class GeminiClient {
         deadlineMs: budgetMs,
         timeoutMs: 12_000,
         preferModel: model,
+        hedgeAfterMs: 4_000,
       });
       model = used;
       const parts = candidate?.content?.parts ?? [];
@@ -275,13 +289,64 @@ export class GeminiClient {
     return { text: '', calls, model: model ?? this.model, rounds: maxRounds, trace };
   }
 
-  /** A timeout or network error reads as 504 so the caller moves on to the next model. */
-  private async call(model: string, body: string, timeoutMs: number): Promise<Pick<Response, 'ok' | 'status' | 'text' | 'json'>> {
+  /**
+   * Walks the chain with at most two calls in flight: the next model starts when the current one
+   * fails with a retryable status, or when it is still silent after `hedgeAfterMs`. The first good
+   * answer wins and the other call is aborted. No new call starts past the budget.
+   */
+  private hedged(
+    chain: string[],
+    body: string,
+    o: { started: number; timeoutMs: number; budgetMs: number; deadline: number; hedgeAfterMs: number },
+  ): Promise<{ model: string; res: CallResult }> {
+    return new Promise((resolve) => {
+      const inFlight = new Map<string, AbortController>();
+      let next = 0;
+      let settled = false;
+      let last: { model: string; res: CallResult } | null = null;
+      let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = (r: { model: string; res: CallResult }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(hedgeTimer);
+        for (const [m, ctrl] of inFlight) if (m !== r.model) ctrl.abort();
+        resolve(r);
+      };
+      const canStart = () => next < chain.length && Date.now() - o.started <= o.budgetMs && o.deadline - (Date.now() - o.started) >= 2_000;
+      const start = () => {
+        if (settled || !canStart()) return false;
+        const model = chain[next++];
+        const left = o.deadline - (Date.now() - o.started);
+        const ctrl = new AbortController();
+        inFlight.set(model, ctrl);
+        void this.call(model, body, Math.max(1_000, Math.min(o.timeoutMs, left)), ctrl.signal).then((res) => {
+          inFlight.delete(model);
+          if (settled) return;
+          if (res.ok || !RETRY_STATUSES.includes(res.status)) return finish({ model, res });
+          this.logger.warn(`Gemini ${model} answered ${res.status}`);
+          last = { model, res };
+          // Replace the failed call; if nothing is left to try and nothing is running, give up.
+          if (!start() && !inFlight.size) finish(last);
+        });
+        clearTimeout(hedgeTimer);
+        hedgeTimer = setTimeout(() => {
+          if (!settled && inFlight.size < 2 && start()) this.logger.warn(`Gemini ${model} silent after ${o.hedgeAfterMs}ms, also asking ${chain[next - 1]}`);
+        }, o.hedgeAfterMs);
+        return true;
+      };
+
+      if (!start()) finish({ model: chain[0], res: { ok: false, status: 504, text: async () => 'no time left', json: async () => ({}) } });
+    });
+  }
+
+  /** A timeout, abort or network error reads as 504 so the caller moves on to the next model. */
+  private async call(model: string, body: string, timeoutMs: number, abort?: AbortSignal): Promise<CallResult> {
     try {
       return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': this.key! },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: abort ? AbortSignal.any([AbortSignal.timeout(timeoutMs), abort]) : AbortSignal.timeout(timeoutMs),
         body,
       });
     } catch (e) {

@@ -86,3 +86,44 @@ describe('GeminiClient.runWithTools', () => {
     await expect(off.generate({ contents: [] })).rejects.toMatchObject({ reason: 'DISABLED' });
   });
 });
+
+describe('GeminiClient.generate hedging', () => {
+  const ok = (model: string) => ({ ok: true, status: 200, text: async () => '', json: async () => ({ candidates: [text(model)] }) });
+  const fail = (status: number) => ({ ok: false, status, text: async () => 'x', json: async () => ({}) });
+  const delay = <T>(ms: number, v: T, signal?: AbortSignal) =>
+    new Promise<T>((resolve) => {
+      const t = setTimeout(() => resolve(v), ms);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(t);
+        resolve(fail(504) as T);
+      });
+    });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('asks the next model when the first is silent, and the first good answer wins', async () => {
+    const client = new GeminiClient(config);
+    const asked: string[] = [];
+    jest.spyOn(global, 'fetch').mockImplementation(async (url, init) => {
+      const model = String(url).match(/models\/([^:]+):/)![1];
+      asked.push(model);
+      return (asked.length === 1 ? delay(2_000, ok(model), init?.signal ?? undefined) : delay(20, ok(model))) as never;
+    });
+    const t = Date.now();
+    const res = await client.generate({ contents: [{ role: 'user', parts: [{ text: 'q' }] }], hedgeAfterMs: 50, timeoutMs: 5_000 });
+    expect(asked).toHaveLength(2);
+    expect(res.model).toBe(asked[1]);
+    expect(Date.now() - t).toBeLessThan(1_000);
+  });
+
+  it('replaces a busy model right away and reports busy when every model fails', async () => {
+    const client = new GeminiClient(config);
+    let n = 0;
+    jest.spyOn(global, 'fetch').mockImplementation(async () => {
+      n++;
+      return fail(503) as never;
+    });
+    await expect(client.generate({ contents: [{ role: 'user', parts: [{ text: 'q' }] }], hedgeAfterMs: 50 })).rejects.toMatchObject({ reason: 'BUSY' });
+    expect(n).toBeGreaterThan(1);
+  });
+});
