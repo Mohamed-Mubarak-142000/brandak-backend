@@ -29,6 +29,7 @@ import { ReturnsModule } from './returns/returns.module';
 import { SupportModule } from './support/support.module';
 import { AdsModule } from './ads/ads.module';
 import { AiModule } from './ai/ai.module';
+import { AssistantModule } from './assistant/assistant.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { ResellersModule } from './resellers/resellers.module';
@@ -96,6 +97,7 @@ import { WishlistsModule } from './wishlists/wishlists.module';
     SupportModule,
     AdsModule,
     AiModule,
+    AssistantModule,
     AlertsModule,
     LoyaltyModule,
     ResellersModule,

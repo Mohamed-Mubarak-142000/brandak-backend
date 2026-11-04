@@ -32,6 +32,12 @@ const envSchema = z.object({
   AI_DAILY_LIMIT: z.coerce.number().int().positive().default(30),
   /** Google Play review accounts: their orders skip the email confirmation code (reviewers can't read that inbox). */
   REVIEW_ACCOUNTS: z.string().default('review.customer@fatrina.app,review.seller@fatrina.app'),
+  /** Shared with the website's server-side proxy so it can forward the visitor's real IP. */
+  WEB_PROXY_SECRET: z.union([z.string().min(24), z.literal('')]).optional(),
+  /** Customer assistant replies per store per (Cairo) day. */
+  ASSISTANT_DAILY_LIMIT: z.coerce.number().int().positive().default(500),
+  /** Seller copilot replies per store per (Cairo) day. */
+  COPILOT_DAILY_LIMIT: z.coerce.number().int().positive().default(100),
   SEED_ADMIN_EMAIL: z.string().email().optional(),
   SEED_ADMIN_PASSWORD: z.string().optional(),
 });

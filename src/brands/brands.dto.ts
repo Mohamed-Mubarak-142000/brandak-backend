@@ -23,6 +23,7 @@ import {
 import { BillingPeriod, BrandStatus, StoreType } from '@/common/enums';
 import { GOVERNORATE_CODES } from '@/common/governorates';
 import { PageQueryDto } from '@/common/pagination';
+import { ASSISTANT_TONES, AssistantTone } from './brand.schema';
 
 export class BrandContactDto {
   @IsString()
@@ -102,6 +103,28 @@ export class ShippingZoneDto {
   @Min(0)
   @Max(10000)
   fee: number;
+}
+
+/** Partial: only the sent fields change. */
+export class AssistantSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  /** Empty = "مساعد {store name}". */
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  name?: string;
+
+  @IsOptional()
+  @IsIn(ASSISTANT_TONES)
+  tone?: AssistantTone;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  extraInfo?: string;
 }
 
 export class PickupDto {
@@ -188,6 +211,11 @@ export class BrandSettingsDto {
   @IsOptional()
   @IsBoolean()
   acceptsOrders?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AssistantSettingsDto)
+  assistant?: AssistantSettingsDto;
 }
 
 export class UpdateBrandDto extends PartialType(OmitType(CreateBrandApplicationDto, ['contact', 'planId', 'billingPeriod'] as const)) {

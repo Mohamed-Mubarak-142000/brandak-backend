@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import type { Request } from 'express';
+import { clientIp } from '@/common/client-ip';
 import { Model } from 'mongoose';
 import { BrandContext, CurrentBrand, OptionalUser, Public, type AuthUser } from '@/common/decorators';
 import { ProductStatus } from '@/common/enums';
@@ -41,7 +42,7 @@ export class TrackingController {
     await this.tracking.event(p.brandId, 'ViewContent', {
       contents: [{ id, quantity: 1, price: unitPriceNow(p, {}) }],
       user: user && { id: user._id.toString(), email: user.email, phone: user.phone },
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers['user-agent'],
     });
   }

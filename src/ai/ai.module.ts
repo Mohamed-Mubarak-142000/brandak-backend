@@ -5,6 +5,7 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsMongoId, IsOptional, ValidateIf 
 import { AuthUser, BrandContext, CurrentBrand, CurrentUser } from '@/common/decorators';
 import { BrandMemberGuard } from '@/common/guards/brand-member.guard';
 import { AiService, AiUsage, AiUsageSchema } from './ai.service';
+import { GeminiClient } from './gemini.client';
 import { GeminiProductAi, PRODUCT_AI } from './product-ai.provider';
 
 class DraftDto {
@@ -44,6 +45,7 @@ export class AiController {
 @Module({
   imports: [MongooseModule.forFeature([{ name: AiUsage.name, schema: AiUsageSchema }])],
   controllers: [AiController],
-  providers: [AiService, { provide: PRODUCT_AI, useClass: GeminiProductAi }],
+  providers: [AiService, GeminiClient, { provide: PRODUCT_AI, useClass: GeminiProductAi }],
+  exports: [GeminiClient],
 })
 export class AiModule {}

@@ -72,6 +72,46 @@ export class OrdersService {
     return this.page(filter, query, 'CUSTOMER');
   }
 
+  /** The customer's latest orders with one store (for that store's assistant). */
+  async recentForCustomerAtBrand(userId: string, brandId: string, limit = 5) {
+    const rows = await this.orders
+      .find({ userId: new Types.ObjectId(userId), brandId: new Types.ObjectId(brandId), deletedAt: null })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    return rows.map((o) => this.toView(o, 'CUSTOMER', true));
+  }
+
+  /** Order counts per status (last `days` days) and the latest orders, for the seller copilot. */
+  async digestForBrand(brandId: string, status?: OrderStatus, days = 30) {
+    const id = new Types.ObjectId(brandId);
+    const since = new Date(Date.now() - days * 86_400_000);
+    const [byStatus, latest] = await Promise.all([
+      this.orders.aggregate<{ _id: OrderStatus; count: number }>([
+        { $match: { brandId: id, deletedAt: null, createdAt: { $gte: since } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      this.orders
+        .find({ brandId: id, deletedAt: null, ...(status ? { status } : {}) })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+    return {
+      days,
+      countsByStatus: Object.fromEntries(byStatus.map((s) => [s._id, s.count])),
+      latest: latest.map((o) => ({
+        orderNumber: o.orderNumber,
+        status: o.status,
+        statusLabelAr: STATUS_AR[o.status],
+        grandTotal: o.grandTotal,
+        itemsCount: o.items.reduce((n, i) => n + i.quantity, 0),
+        customerFirstName: String((o.customer as { name?: string } | undefined)?.name ?? '').split(' ')[0] || null,
+        createdAt: o.createdAt,
+      })),
+    };
+  }
+
   async getMine(userId: string, id: string) {
     const order = await this.orders.findOne({ _id: id, userId: new Types.ObjectId(userId), deletedAt: null }).lean();
     if (!order) throw AppError.notFound('Order');

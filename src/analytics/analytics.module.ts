@@ -53,5 +53,6 @@ export class AdminAnalyticsController {
   ],
   controllers: [BrandAnalyticsController, AdminAnalyticsController],
   providers: [AnalyticsService],
+  exports: [AnalyticsService],
 })
 export class AnalyticsModule {}

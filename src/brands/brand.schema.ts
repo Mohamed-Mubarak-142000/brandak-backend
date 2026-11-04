@@ -22,6 +22,39 @@ export class ShippingZone {
 }
 const ShippingZoneSchema = SchemaFactory.createForClass(ShippingZone);
 
+export const ASSISTANT_TONES = ['friendly', 'formal', 'brief'] as const;
+export type AssistantTone = (typeof ASSISTANT_TONES)[number];
+
+/** The store's AI assistant on its page (answers customers from the store's own data). */
+@Schema({ _id: false })
+export class AssistantSettings {
+  @Prop({ default: true })
+  enabled: boolean;
+
+  /** Empty = "مساعد {store name}". */
+  @Prop({ default: '', maxlength: 40 })
+  name: string;
+
+  @Prop({ type: String, enum: ASSISTANT_TONES, default: 'friendly' })
+  tone: AssistantTone;
+
+  /** Anything else the assistant should know (working hours, sizing tips, offers). */
+  @Prop({ default: '', maxlength: 2000 })
+  extraInfo: string;
+}
+const AssistantSettingsSchema = SchemaFactory.createForClass(AssistantSettings);
+
+/** Stores saved before the assistant existed have no value: these apply. */
+export function assistantSettingsOf(settings?: { assistant?: Partial<AssistantSettings> | null } | null): AssistantSettings {
+  const a = settings?.assistant ?? {};
+  return {
+    enabled: a.enabled ?? true,
+    name: a.name ?? '',
+    tone: ASSISTANT_TONES.includes(a.tone as AssistantTone) ? (a.tone as AssistantTone) : 'friendly',
+    extraInfo: a.extraInfo ?? '',
+  };
+}
+
 @Schema({ _id: false })
 export class BrandSettings {
   /** Per-governorate delivery fee. Governorates not listed fall back to `defaultShippingFee`. */
@@ -62,6 +95,9 @@ export class BrandSettings {
   /** Lets an owner pause new orders (e.g. on holiday) without hiding the store. */
   @Prop({ default: true })
   acceptsOrders: boolean;
+
+  @Prop({ type: AssistantSettingsSchema, default: () => ({}) })
+  assistant: AssistantSettings;
 }
 const BrandSettingsSchema = SchemaFactory.createForClass(BrandSettings);
 

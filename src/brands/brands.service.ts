@@ -13,7 +13,7 @@ import { CategoriesService } from '@/categories/categories.service';
 import { Env } from '@/config/env';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { UploadsService } from '@/uploads/uploads.service';
-import { Brand, BrandDocument } from './brand.schema';
+import { assistantSettingsOf, Brand, BrandDocument } from './brand.schema';
 import { BrandMembersService } from './brand-members.service';
 import {
   AdminBrandsQueryDto,
@@ -22,6 +22,9 @@ import {
   CreateBrandApplicationDto,
   UpdateBrandDto,
 } from './brands.dto';
+
+/** A settings subdocument as a plain object (lean reads already are). */
+const plain = <T>(v: T): T => ((v as { toObject?: () => T })?.toObject?.() ?? v);
 
 const PUBLIC_FIELDS =
   'name slug storeType description logo cover categoryIds contact socialLinks settings ratingAvg ratingCount createdAt';
@@ -132,7 +135,13 @@ export class BrandsService {
       if (pickup?.enabled && !pickup.address?.trim()) {
         throw AppError.unprocessable('PICKUP_ADDRESS_REQUIRED', 'Write the pickup address');
       }
-      Object.assign(brand.settings, dto.settings);
+      // The assistant block is a partial patch: keep the fields that weren't sent.
+      const { assistant, ...rest } = dto.settings;
+      Object.assign(brand.settings, rest);
+      if (assistant) {
+        const sent = Object.fromEntries(Object.entries(assistant).filter(([, v]) => v !== undefined));
+        brand.settings.assistant = { ...assistantSettingsOf(plain(brand.settings)), ...sent };
+      }
       if (pickup) {
         brand.settings.pickup = {
           enabled: pickup.enabled,
@@ -353,7 +362,7 @@ export class BrandsService {
       statusReason: brand.statusReason ?? null,
       contact: brand.contact ?? {},
       socialLinks: brand.socialLinks ?? {},
-      settings: brand.settings,
+      settings: { ...plain(brand.settings), assistant: assistantSettingsOf(plain(brand.settings)) },
       // Pixel ids only; access tokens are write-only.
       tracking: { metaPixelId: brand.tracking?.metaPixelId ?? '', tiktokPixelId: brand.tracking?.tiktokPixelId ?? '' },
       subscriptionEndsAt: brand.subscriptionEndsAt,

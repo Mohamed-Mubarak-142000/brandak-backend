@@ -1,12 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Env } from '@/config/env';
+import { candidateText, GeminiClient, GeminiError } from './gemini.client';
+
+export { FALLBACK_MODELS, LATEST_MODEL } from './gemini.client';
 
 export const PRODUCT_AI = Symbol('PRODUCT_AI');
-/** Google's alias for the current Flash model. */
-export const LATEST_MODEL = 'gemini-flash-latest';
-/** Tried in order when the configured model is busy or gone (all read photos, all free-tier). */
-export const FALLBACK_MODELS = [LATEST_MODEL, 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-flash-lite-latest'];
 
 export interface ProductDraftInput {
   /** 1–3 photos of the same product (the first is the main one). */
@@ -44,7 +41,7 @@ export interface ProductAiProvider {
   draft(input: ProductDraftInput): Promise<ProductDraft>;
 }
 
-const STORE_TYPE_AR: Record<string, string> = { BRAND: 'براند ملابس أو منتجات', SHOWROOM: 'معرض', WAREHOUSE: 'مخزن جملة', SHOP: 'محل' };
+export const STORE_TYPE_AR: Record<string, string> = { BRAND: 'براند ملابس أو منتجات', SHOWROOM: 'معرض', WAREHOUSE: 'مخزن جملة', SHOP: 'محل' };
 
 const PROMPT = (input: ProductDraftInput) => `إنت خبير في كتابة صفحات منتجات لمتاجر أونلاين في مصر (تطبيق «فاترينة»). نوع المتجر: ${STORE_TYPE_AR[input.storeType] ?? input.storeType}.
 الصور المرفقة (${input.imageUrls.length}) كلها لنفس المنتج. اتفرّج عليها كويس: نوع المنتج، الخامة، القصّة/الموديل، اللون، التفاصيل (زراير، جيوب، طباعة، نقشة)، الاستخدام، ولو فيه اسم ماركة أو كلام مكتوب على المنتج نفسه.
@@ -73,63 +70,49 @@ const forModel = (url: string) => {
 @Injectable()
 export class GeminiProductAi implements ProductAiProvider {
   private readonly logger = new Logger(GeminiProductAi.name);
-  private readonly key: string | undefined;
-  private readonly model: string;
 
-  constructor(config: ConfigService<Env, true>) {
-    this.key = config.get('GEMINI_API_KEY', { infer: true }) || undefined;
-    this.model = config.get('GEMINI_MODEL', { infer: true });
-  }
+  constructor(private readonly gemini: GeminiClient) {}
 
   get enabled() {
-    return !!this.key;
+    return this.gemini.enabled;
   }
 
   async draft(input: ProductDraftInput): Promise<ProductDraft> {
     const started = Date.now();
     const images = await Promise.all(input.imageUrls.slice(0, 3).map((u) => this.fetchImage(u)));
-    const body = JSON.stringify({
-      contents: [{ parts: [...images.map((img) => ({ inline_data: img })), { text: PROMPT(input) }] }],
-      generationConfig: {
-        temperature: 0.3,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'OBJECT',
-          properties: {
-            title: { type: 'STRING' },
-            description: { type: 'STRING' },
-            // The model can only pick one of the store's categories.
-            categoryId: input.categories.length ? { type: 'STRING', enum: input.categories.map((c) => c.id) } : { type: 'STRING' },
-            colors: { type: 'ARRAY', items: { type: 'STRING' } },
-            sizes: { type: 'ARRAY', items: { type: 'STRING' } },
-            tags: { type: 'ARRAY', items: { type: 'STRING' } },
-            suggestedPrice: { type: 'NUMBER' },
+    let result: Awaited<ReturnType<GeminiClient['generate']>>;
+    try {
+      // Busy/rate-limited/retired models fall through to the next one while there is time left.
+      result = await this.gemini.generate({
+        startedAt: started,
+        timeoutMs: 18_000,
+        budgetMs: 42_000,
+        contents: [{ parts: [...images.map((img) => ({ inline_data: img })), { text: PROMPT(input) }] }],
+        generationConfig: {
+          temperature: 0.3,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: {
+              title: { type: 'STRING' },
+              description: { type: 'STRING' },
+              // The model can only pick one of the store's categories.
+              categoryId: input.categories.length ? { type: 'STRING', enum: input.categories.map((c) => c.id) } : { type: 'STRING' },
+              colors: { type: 'ARRAY', items: { type: 'STRING' } },
+              sizes: { type: 'ARRAY', items: { type: 'STRING' } },
+              tags: { type: 'ARRAY', items: { type: 'STRING' } },
+              suggestedPrice: { type: 'NUMBER' },
+            },
+            required: ['title', 'description', 'colors', 'sizes', 'tags', 'suggestedPrice'],
           },
-          required: ['title', 'description', 'colors', 'sizes', 'tags', 'suggestedPrice'],
         },
-      },
-    });
-
-    // Free-tier models are often "busy" (503), rate-limited (429) or retired (404): try the next
-    // one in line instead of failing, as long as there is time left before the server's limit.
-    const chain = [...new Set([this.model, ...FALLBACK_MODELS])];
-    let model = chain[0];
-    let res = await this.call(model, body, 18_000);
-    for (const next of chain.slice(1)) {
-      if (![404, 429, 500, 503, 504].includes(res.status) || Date.now() - started > 42_000) break;
-      this.logger.warn(`Gemini ${model} answered ${res.status}, trying ${next}`);
-      model = next;
-      res = await this.call(model, body, Math.max(8_000, Math.min(18_000, 54_000 - (Date.now() - started))));
+      });
+    } catch (e) {
+      if (e instanceof GeminiError) throw new ProductAiError(e.reason === 'BUSY' ? 'BUSY' : 'FAILED', e.message);
+      throw e;
     }
-    if (!res.ok) {
-      const detail = (await res.text()).slice(0, 300);
-      this.logger.warn(`Gemini ${res.status}: ${detail}`);
-      if ([429, 503, 504].includes(res.status)) throw new ProductAiError('BUSY', `gemini ${res.status}`);
-      throw new ProductAiError('FAILED', `gemini ${res.status}`);
-    }
-    const json = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[] };
-    const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('');
-    if (!text) throw new ProductAiError('UNREADABLE', `gemini empty (${json.candidates?.[0]?.finishReason ?? 'no candidates'})`);
+    const text = candidateText(result.candidate);
+    if (!text) throw new ProductAiError('UNREADABLE', `gemini empty (${result.candidate?.finishReason ?? 'no candidates'})`);
     let draft: ProductDraft;
     try {
       draft = JSON.parse(text) as ProductDraft;
@@ -137,7 +120,7 @@ export class GeminiProductAi implements ProductAiProvider {
       throw new ProductAiError('UNREADABLE', 'gemini returned invalid JSON');
     }
     if (!draft.title?.trim()) throw new ProductAiError('UNREADABLE', 'not a product photo');
-    this.logger.log(`draft in ${Date.now() - started}ms with ${model}`);
+    this.logger.log(`draft in ${Date.now() - started}ms with ${result.model}`);
     return draft;
   }
 
@@ -146,20 +129,5 @@ export class GeminiProductAi implements ProductAiProvider {
     if (!res?.ok) throw new ProductAiError('IMAGE', `image fetch ${res?.status ?? 'failed'}`);
     const mime = res.headers.get('content-type')?.split(';')[0] || 'image/jpeg';
     return { mime_type: mime, data: Buffer.from(await res.arrayBuffer()).toString('base64') };
-  }
-
-  /** A timeout or network error reads as 504 so the caller moves on to the next model. */
-  private async call(model: string, body: string, timeoutMs: number): Promise<Pick<Response, 'ok' | 'status' | 'text' | 'json'>> {
-    try {
-      return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': this.key! },
-        signal: AbortSignal.timeout(timeoutMs),
-        body,
-      });
-    } catch (e) {
-      const message = (e as Error).message;
-      return { ok: false, status: 504, text: async () => message, json: async () => ({}) };
-    }
   }
 }

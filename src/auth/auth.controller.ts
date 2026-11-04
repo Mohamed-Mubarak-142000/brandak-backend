@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
+import { clientIp } from '@/common/client-ip';
 import { AuthUser, CurrentUser, Public } from '@/common/decorators';
 import {
   ChangePasswordDto,
@@ -103,5 +104,5 @@ export class AuthController {
 }
 
 function clientMeta(req: Request) {
-  return { userAgent: req.headers['user-agent']?.slice(0, 300), ip: req.ip };
+  return { userAgent: req.headers['user-agent']?.slice(0, 300), ip: clientIp(req) };
 }
