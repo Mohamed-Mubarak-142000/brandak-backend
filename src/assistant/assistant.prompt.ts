@@ -69,10 +69,11 @@ export const SELLER_PAGES = {
   products: '/seller/products',
   orders: '/seller/orders',
   settings: '/seller/settings',
-  questions: '/seller/questions',
   assistant: '/seller/assistant',
-  commissions: '/seller/commissions',
-  promotions: '/seller/promotions',
+  // Not on the website yet: these live in the seller screens of the Fatrina app.
+  questions: 'تطبيق فاترينة (أسئلة العملاء)',
+  commissions: 'تطبيق فاترينة (حسابي مع فاترينة)',
+  promotions: 'تطبيق فاترينة (الكوبونات والعروض)',
 };
 
 export function copilotPrompt(p: CopilotPromptInput) {
