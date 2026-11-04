@@ -69,6 +69,17 @@ describe('GeminiClient.runWithTools', () => {
     expect(res.text).toBe('خلاص');
   });
 
+  it('keeps text the model wrote next to a tool call', async () => {
+    const client = new GeminiClient(config);
+    const answers: GeminiCandidate[] = [
+      { content: { parts: [{ text: 'عندنا طقم بـ 350 ج.م.' }, { functionCall: { name: 'show', args: {} } }] } },
+      text('تقدر تطلبه من الموقع.'),
+    ];
+    jest.spyOn(client, 'generate').mockImplementation(async () => ({ candidate: answers.shift(), model: 'm' }));
+    const res = await client.runWithTools({ system: 's', history: [], userText: 'u', tools: [{ declaration: { name: 'show', description: 'd' }, handler: () => ({ ok: true }) }] });
+    expect(res.text).toBe('عندنا طقم بـ 350 ج.م.\nتقدر تطلبه من الموقع.');
+  });
+
   it('is disabled without a key', async () => {
     const off = new GeminiClient({ get: () => undefined } as never);
     expect(off.enabled).toBe(false);

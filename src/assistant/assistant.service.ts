@@ -37,6 +37,8 @@ const tidy = (s: string) =>
   s
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/^#+\s*/gm, '')
+    // The lite model sometimes writes a tool call as text ("suggest_action(action="login")").
+    .replace(/^\s*`?(?:suggest_action|show_products|cannot_answer|search_products|get_product|get_store_info|get_my_orders)\s*\(.*\)`?\s*$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
     .slice(0, 1500);
@@ -215,7 +217,10 @@ export class AssistantService {
     });
     const history = (conversation?.messages ?? []).map((m) => ({ role: m.role === 'assistant' ? ('model' as const) : ('user' as const), text: m.text }));
     const result = await this.gemini.runWithTools({ system, history, userText: text, tools, maxRounds: 4, budgetMs: 40_000, generationConfig: { temperature: 0.4 } });
-    this.logger.log(`assistant ${brand.slug}: ${result.rounds} rounds, tools ${result.calls.map((c) => c.name).join(',') || '-'}`);
+    this.logger.log(
+      `assistant ${brand.slug}: ${result.model}, ${result.rounds} rounds, tools ${result.calls.map((c) => c.name).join(',') || '-'}` +
+        ` | ${(result.trace ?? []).map((t) => `${t.round}:${t.model}:${t.ms}ms:${t.calls.join('+') || 'text'}`).join(' ')}`,
+    );
 
     let reply = tidy(result.text);
     if (!reply) reply = UNSURE;

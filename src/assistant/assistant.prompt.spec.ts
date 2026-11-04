@@ -25,4 +25,11 @@ describe('assistant prompt', () => {
     expect(p).toContain('64b000000000000000000001');
     expect(p).toContain('محتاج أتأكد من المتجر');
   });
+
+  it('tells the model not to greet and to answer other-store questions with its scope, not as unanswered', () => {
+    const p = assistantPrompt({ ...base, storeType: StoreType.BRAND });
+    expect(p).toContain('متبدأش ردك بتحية');
+    expect(p).toContain('لو العميل سأل عن متجر أو براند تاني');
+    expect(p).toContain('متناديش cannot_answer');
+  });
 });

@@ -117,11 +117,23 @@ export interface RunWithToolsInput {
   generationConfig?: Record<string, unknown>;
 }
 
+export interface RoundTrace {
+  round: number;
+  model: string;
+  ms: number;
+  toolsAllowed: boolean;
+  calls: string[];
+  finishReason?: string;
+  textChars: number;
+}
+
 export interface RunWithToolsResult {
   text: string;
   calls: ToolCallRecord[];
   model: string;
   rounds: number;
+  /** One entry per model call, for logs. */
+  trace?: RoundTrace[];
 }
 
 /**
@@ -201,9 +213,12 @@ export class GeminiClient {
     while (contents.length > 1 && contents[0].role !== 'user') contents.shift();
 
     const calls: ToolCallRecord[] = [];
+    const trace: RoundTrace[] = [];
+    const said: string[] = [];
     let model: string | undefined = this.lastGood && Date.now() - this.lastGood.at < 60_000 ? this.lastGood.model : undefined;
     for (let round = 1; round <= maxRounds; round++) {
       const last = round === maxRounds || Date.now() - started > budgetMs * 0.75;
+      const roundStart = Date.now();
       const { candidate, model: used } = await this.generate({
         systemInstruction: input.system,
         contents,
@@ -220,7 +235,20 @@ export class GeminiClient {
       model = used;
       const parts = candidate?.content?.parts ?? [];
       const requested = parts.map((p) => p.functionCall).filter((c): c is GeminiFunctionCall => !!c?.name);
-      if (!requested.length || last) return { text: candidateText(candidate), calls, model: used, rounds: round };
+      const text = candidateText(candidate);
+      trace.push({
+        round,
+        model: used,
+        ms: Date.now() - roundStart,
+        toolsAllowed: !!input.tools.length && !last,
+        calls: requested.map((c) => c.name),
+        finishReason: candidate?.finishReason,
+        textChars: text.length,
+      });
+      this.logger.debug(`round ${round} ${used} ${Date.now() - roundStart}ms tools=${!last} calls=${requested.map((c) => c.name).join(',') || '-'} finish=${candidate?.finishReason ?? '-'}`);
+      // Text written next to tool calls in earlier rounds is part of the answer too.
+      if (!requested.length || last) return { text: [...said, text].filter(Boolean).join('\n'), calls, model: used, rounds: round, trace };
+      if (text) said.push(text);
 
       contents.push({ role: 'model', parts });
       const results = await Promise.all(
@@ -244,7 +272,7 @@ export class GeminiClient {
       contents.push({ role: 'user', parts: results });
     }
     /* istanbul ignore next -- the last round always returns */
-    return { text: '', calls, model: model ?? this.model, rounds: maxRounds };
+    return { text: '', calls, model: model ?? this.model, rounds: maxRounds, trace };
   }
 
   /** A timeout or network error reads as 504 so the caller moves on to the next model. */
